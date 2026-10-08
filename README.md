@@ -1,26 +1,36 @@
 # Bumblebee
 
-Bumblebee is a browser engine written in Rust.
+Bumblebee is an independent browser-engine project written in Rust.
 
-## Current engine layers
+It is intentionally designed as an engine, not a wrapper around Chromium, WebKit, or an existing browser widget.
 
-- HTTP/HTTPS navigation with Rustls
-- Redirect handling
-- HTML5 parsing
-- DOM tree traversal
-- Page metadata extraction
-- Modular engine architecture
+## Engine architecture
 
-## Roadmap
+- **Networking** — HTTP/HTTPS navigation, TLS through Rustls, compression, redirects and user-agent handling.
+- **HTML** — HTML5 parsing and document metadata.
+- **DOM foundation** — document representation and traversal.
+- **CSS foundation** — style values, display/position, lengths, box edges and basic color parsing.
+- **Style system** — computed-style foundation ready for selector matching and cascading.
+- **Layout** — viewport and block-flow primitives.
+- **Painting** — display-list style paint commands.
+- **Rendering pipeline** — style → layout → paint pipeline boundary.
+- **JavaScript boundary** — runtime trait so a real JS engine can be integrated without coupling the browser core to one implementation.
+- **Storage** — origin-keyed persistent-state abstraction.
+- **HTTP cache** — bounded-by-TTL in-memory response cache.
+- **Security policy** — navigation scheme and insecure-HTTP policy boundary.
 
-1. DOM APIs
-2. CSS tokenizer and style system
-3. Layout tree
-4. Text and box layout
-5. Painting and compositing
-6. JavaScript runtime integration
-7. Browser networking policies and storage
-8. Tabs, history, cache, cookies and permissions
-9. Native desktop UI
+## Roadmap to a production browser
 
-The goal is a real browser engine built incrementally in Rust, rather than a wrapper around an existing browser engine.
+1. Complete DOM mutation/events and Web APIs.
+2. CSS tokenizer, selectors, cascade, inheritance and computed values.
+3. Full layout: block, inline, flex, grid, tables, positioned elements and scrolling.
+4. Text shaping, fonts, images, SVG and media.
+5. GPU-backed compositing and a real raster backend.
+6. JavaScript runtime integration and the browser event loop.
+7. Fetch, cookies, cache validation, service workers and storage quotas.
+8. Same-origin policy, CORS, CSP, permissions and process isolation.
+9. Accessibility tree and input/event routing.
+10. Tabs, navigation history, downloads, bookmarks and browser UI.
+11. Web-platform tests and conformance testing.
+
+Bumblebee is deliberately being built in layers so every subsystem can become real rather than being represented by a fake “full browser” API.
