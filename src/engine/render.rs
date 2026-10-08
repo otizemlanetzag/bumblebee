@@ -1,4 +1,4 @@
-use super::{css::{compute_styles,Stylesheet},document::Node,layout::{layout_node,LayoutBox},paint::{paint,PaintCommand}};
+use super::{css::{compute_styles_at,Stylesheet},document::Node,layout::{layout_node,LayoutBox},paint::{paint,PaintCommand}};
 
 pub struct RenderPipeline;
 
@@ -8,7 +8,7 @@ impl RenderPipeline{
   let commands=paint(&tree);(tree,commands)
  }
  fn layout_tree(&self,node:&Node,sheet:&Stylesheet,parent:Option<&super::css::ComputedStyle>,id:usize,origin:(f32,f32),viewport:(f32,f32))->LayoutBox{
-  let style=compute_styles(node,sheet,parent);
+  let style=compute_styles_at(node,sheet,parent,viewport);
   let mut children=Vec::new(); let mut cursor_y=0.;
   for (i,child) in node.children.iter().enumerate(){
    if child.tag.as_deref()==Some("style") || child.tag.as_deref()==Some("script"){continue}
