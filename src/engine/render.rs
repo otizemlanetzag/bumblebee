@@ -1,3 +1,7 @@
-use super::{layout::{layout_root,LayoutBox},paint::{paint,PaintCommand},style::{default_style,Style}};
+use super::{css::ComputedStyle,layout::{layout_node,LayoutBox},paint::{PaintCommand,paint}};
 pub struct RenderPipeline;
-impl RenderPipeline{pub fn build(&self,id:usize,style:Option<Style>,viewport:(f32,f32))->(LayoutBox,Vec<PaintCommand>){let tree=layout_root(id,style.unwrap_or_else(default_style),viewport);let commands=paint(&tree);(tree,commands)}}
+impl RenderPipeline{
+ pub fn build(&self,id:usize,style:Option<ComputedStyle>,viewport:(f32,f32))->(LayoutBox,Vec<PaintCommand>){
+  let tree=layout_node(id,style.unwrap_or_default(),Vec::new(),(0.,0.),viewport,viewport);(tree,paint(&tree))
+ }
+}
