@@ -26,7 +26,17 @@ impl BrowserEngine {
         let document=parser::parse(&html);
         let title=document.title.clone();
         let element_count=document.element_count;
-        let css=collect_styles(&document);
+        let mut css=collect_styles(&document);
+        // Load linked author stylesheets using URL resolution against the page URL.
+        for href in collect_stylesheet_links(&document) {
+            if let Ok(css_url)=url.join(&href) {
+                if let Ok(source)=self.fetcher.get(&css_url).await {
+                    css.push('\n');
+                    css.push_str(&source);
+                    css.push('\n');
+                }
+            }
+        }
         let sheet=css::parse_stylesheet(&css);
         let fallback=document::Node::default();
         let root=document.root.as_ref().unwrap_or(&fallback);
@@ -50,6 +60,21 @@ fn collect_styles(document:&Document)->String {
         for child in &n.children { walk(child,out); }
     }
     let mut out=String::new();
+    if let Some(root)=&document.root { walk(root,&mut out); }
+    out
+}
+
+fn collect_stylesheet_links(document:&Document)->Vec<String> {
+    fn walk(node:&document::Node,out:&mut Vec<String>) {
+        if node.tag.as_deref()==Some("link") {
+            let rel=node.attributes.get("rel").map(|x|x.to_ascii_lowercase()).unwrap_or_default();
+            if rel.split_whitespace().any(|x|x=="stylesheet") {
+                if let Some(href)=node.attributes.get("href") { out.push(href.clone()); }
+            }
+        }
+        for child in &node.children { walk(child,out); }
+    }
+    let mut out=Vec::new();
     if let Some(root)=&document.root { walk(root,&mut out); }
     out
 }
