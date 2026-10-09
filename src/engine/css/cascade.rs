@@ -102,4 +102,13 @@ mod tests {
    assert_eq!(child.display,"block");
    assert_eq!(child.width,CssLength::Auto);
  }
+ #[test] fn inline_style_overrides_normal_stylesheet_rule() {
+   let mut node=Node::default();
+   node.tag=Some("p".into());
+   node.attributes.insert("style".into(),"width: 42px; color: blue".into());
+   let sheet=super::super::parser::parse_stylesheet("p { width: 10px; color: red; }");
+   let computed=compute_styles_at(&node,&sheet,None,(800.0,600.0));
+   assert_eq!(computed.width,CssLength::Px(42.0));
+   assert_eq!(computed.color,super::super::values::parse_color("blue").unwrap());
+ }
 }
