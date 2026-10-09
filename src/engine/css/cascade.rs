@@ -49,7 +49,7 @@ pub fn compute_styles_with_context(
                 None=>true,
                 Some((imp,old,ord,_))=>d.important>*imp||(d.important==*imp&&(spec>*old||(spec==*old&&order>=*ord)))
             };
-            if replace { chosen.insert(d.property.clone(),(d.important,spec,usize::MAX-order,d.value.clone())); }
+            if replace { chosen.insert(d.property.clone(),(d.important,spec,usize::MAX,d.value.clone())); }
         }
     }
     for(p,(_,_,_,v))in chosen { apply(&mut out,&p,v); }
