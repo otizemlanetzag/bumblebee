@@ -73,7 +73,7 @@ fn parse_block(input: &str, rules: &mut Vec<CssRule>, media: &mut Vec<MediaRule>
     }
 }
 
-fn parse_declarations(body: &str) -> Vec<Declaration> {
+pub fn parse_declarations(body: &str) -> Vec<Declaration> {
     split_top_level(body, ';').into_iter().filter_map(|item| {
         let colon = find_top_level(&item, 0, b':')?;
         let property = item[..colon].trim().to_ascii_lowercase();
