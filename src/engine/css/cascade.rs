@@ -17,7 +17,9 @@ impl Default for ComputedStyle {
 }
 pub fn compute_styles(node:&Node,sheet:&Stylesheet,parent:Option<&ComputedStyle>)->ComputedStyle{ compute_styles_at(node,sheet,parent,(1280.,720.)) }
 pub fn compute_styles_at(node:&Node,sheet:&Stylesheet,parent:Option<&ComputedStyle>,viewport:(f32,f32))->ComputedStyle{
-    let mut out=parent.cloned().unwrap_or_default(); out.inherited_color=parent.is_some();
+    // CSS inheritance applies only to inherited properties, not every property.
+    let mut out=ComputedStyle::default();
+    if let Some(p)=parent { out.color=p.color; out.font_size=p.font_size; out.font_weight=p.font_weight.clone(); out.inherited_color=true; }
     let mut chosen:HashMap<String,(bool,super::selector::Specificity,usize,CssValue)>=HashMap::new();
     let mut active=sheet.rules.clone();
     for media in &sheet.media { if media_matches(&media.condition,viewport) { active.extend(media.rules.clone()); } }
@@ -30,7 +32,10 @@ fn apply(s:&mut ComputedStyle,p:&str,v:CssValue){
         ("width",CssValue::Length(x))=>s.width=x,("height",CssValue::Length(x))=>s.height=x,
         ("margin",CssValue::Length(x))=>s.margin=x,("padding",CssValue::Length(x))=>s.padding=x,
         ("color",CssValue::Color(x))=>s.color=x,("background",CssValue::Color(x))|("background-color",CssValue::Color(x))=>s.background_color=x,
-        ("font-size",CssValue::Length(CssLength::Px(x)))=>s.font_size=x,("font-weight",CssValue::Keyword(x))=>s.font_weight=x,
+        ("color",CssValue::Keyword(x)) if x=="inherit"=>s.inherited_color=true,
+        ("font-size",CssValue::Length(CssLength::Px(x)))=>s.font_size=x,("font-size",CssValue::Length(CssLength::Em(x)))=>s.font_size*=x,
+        ("font-size",CssValue::Length(CssLength::Rem(x)))=>s.font_size=16.0*x,("font-size",CssValue::Length(CssLength::Percent(x)))=>s.font_size*=x/100.0,
+        ("font-weight",CssValue::Keyword(x))=>s.font_weight=x,
         ("flex-direction",CssValue::Keyword(x))=>s.flex_direction=x,("flex-wrap",CssValue::Keyword(x))=>s.flex_wrap=x,
         ("justify-content",CssValue::Keyword(x))=>s.justify_content=x,("align-items",CssValue::Keyword(x))=>s.align_items=x,
         ("flex-grow",CssValue::Raw(x))|("flex-grow",CssValue::Keyword(x))=>s.flex_grow=x.parse().unwrap_or(0.),
@@ -57,4 +62,15 @@ fn extract_px(s:&str,name:&str)->Option<f32>{
  let i=s.find(name)?;let tail=&s[i+name.len()..];let tail=tail.trim_start_matches(|c:char|c==':'||c.is_whitespace());
  let end=tail.find(|c:char|c==')'||c==';'||c.is_whitespace()).unwrap_or(tail.len());
  tail[..end].trim_end_matches("px").parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+ use super::*;
+ #[test] fn non_inherited_properties_reset_to_initial_values() {
+   let parent=ComputedStyle { display:"flex".into(), width:CssLength::Px(400.0), ..ComputedStyle::default() };
+   let child=compute_styles_at(&Node::default(),&Stylesheet::default(),Some(&parent),(800.0,600.0));
+   assert_eq!(child.display,"block");
+   assert_eq!(child.width,CssLength::Auto);
+ }
 }
