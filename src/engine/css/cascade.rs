@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use super::{parser::{Stylesheet,CssValue},selector::{parse_selector,matches,specificity},values::{CssColor,CssLength}};
+use super::{parser::{Stylesheet,CssValue},selector::{parse_selector,matches_with_context,specificity},values::{CssColor,CssLength}};
 use crate::engine::document::Node;
 
 #[derive(Clone,Debug)]
@@ -17,13 +17,19 @@ impl Default for ComputedStyle {
 }
 pub fn compute_styles(node:&Node,sheet:&Stylesheet,parent:Option<&ComputedStyle>)->ComputedStyle{ compute_styles_at(node,sheet,parent,(1280.,720.)) }
 pub fn compute_styles_at(node:&Node,sheet:&Stylesheet,parent:Option<&ComputedStyle>,viewport:(f32,f32))->ComputedStyle{
+    compute_styles_with_context(node, sheet, parent, viewport, &[], &[], &[])
+}
+pub fn compute_styles_with_context(
+    node:&Node, sheet:&Stylesheet, parent:Option<&ComputedStyle>, viewport:(f32,f32),
+    ancestors:&[&Node], previous_siblings:&[&Node], following_siblings:&[&Node]
+)->ComputedStyle{
     // CSS inheritance applies only to inherited properties, not every property.
     let mut out=ComputedStyle::default();
     if let Some(p)=parent { out.color=p.color; out.font_size=p.font_size; out.font_weight=p.font_weight.clone(); out.inherited_color=true; }
     let mut chosen:HashMap<String,(bool,super::selector::Specificity,usize,CssValue)>=HashMap::new();
     let mut active=sheet.rules.clone();
     for media in &sheet.media { if media_matches(&media.condition,viewport) { active.extend(media.rules.clone()); } }
-    for (order,rule) in active.iter().enumerate(){let sel=parse_selector(&rule.selector);if !matches(&sel,node){continue}let spec=specificity(&sel);for d in &rule.declarations{let replace=match chosen.get(&d.property){None=>true,Some((imp,old,ord,_))=>d.important>*imp||(d.important==*imp&&(spec>*old||(spec==*old&&order>=*ord)))};if replace{chosen.insert(d.property.clone(),(d.important,spec,order,d.value.clone()));}}}
+    for (order,rule) in active.iter().enumerate(){let sel=parse_selector(&rule.selector);if !matches_with_context(&sel,node,ancestors,previous_siblings,following_siblings){continue}let spec=specificity(&sel);for d in &rule.declarations{let replace=match chosen.get(&d.property){None=>true,Some((imp,old,ord,_))=>d.important>*imp||(d.important==*imp&&(spec>*old||(spec==*old&&order>=*ord)))};if replace{chosen.insert(d.property.clone(),(d.important,spec,order,d.value.clone()));}}}
     for(p,(_,_,_,v))in chosen{apply(&mut out,&p,v);} out
 }
 fn apply(s:&mut ComputedStyle,p:&str,v:CssValue){
