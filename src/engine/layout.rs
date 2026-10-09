@@ -102,7 +102,7 @@ pub fn layout_node(id:usize,style:ComputedStyle,mut children:Vec<LayoutBox>,orig
         if c.rect.width>width {c.rect.width=width;}
     }
     let content_height=if explicit_height{height}else{(y-origin.1+padding).max(1.0)};
-    LayoutBox{node_id:id,rect:Rect{x:origin.0,y:origin.1,width,height:content_height},style,children}
+    LayoutBox{node_id:id,rect:Rect{x:origin.0,y:origin.1,width,height:content_height},style,text:None,children}
 }
 
 pub fn layout_root(id:usize,style:ComputedStyle,viewport:(f32,f32))->LayoutBox {
