@@ -16,7 +16,7 @@ impl RenderPipeline {
     ) -> LayoutBox {
         let style = compute_styles_with_context(node, sheet, parent, viewport, ancestors, previous_siblings, following_siblings);
         if style.display == "none" {
-            return layout_node(id, style, Vec::new(), origin, (0.0, 0.0), viewport);
+            let mut hidden = layout_node(id, style, Vec::new(), origin, (0.0, 0.0), viewport);\n            hidden.text = node.text.clone();\n            return hidden;
         }
 
         let mut children = Vec::new();
