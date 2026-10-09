@@ -89,7 +89,7 @@ pub fn layout_node(id:usize,style:ComputedStyle,mut children:Vec<LayoutBox>,orig
             if col==columns-1 || i+1==children.len(){row_y+=row_heights[row]+gap;}
         }
         let content_height=if explicit_height{height}else{row_y.max(1.0)};
-        return LayoutBox{node_id:id,rect:Rect{x:origin.0,y:origin.1,width,height:content_height},style,children};
+        return LayoutBox{node_id:id,rect:Rect{x:origin.0,y:origin.1,width,height:content_height},style,text:None,children};
     }
 
     let margin=px(&style.margin,width,style.font_size,viewport);
