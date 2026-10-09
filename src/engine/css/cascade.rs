@@ -29,8 +29,31 @@ pub fn compute_styles_with_context(
     let mut chosen:HashMap<String,(bool,super::selector::Specificity,usize,CssValue)>=HashMap::new();
     let mut active=sheet.rules.clone();
     for media in &sheet.media { if media_matches(&media.condition,viewport) { active.extend(media.rules.clone()); } }
-    for (order,rule) in active.iter().enumerate(){let sel=parse_selector(&rule.selector);if !matches_with_context(&sel,node,ancestors,previous_siblings,following_siblings){continue}let spec=specificity(&sel);for d in &rule.declarations{let replace=match chosen.get(&d.property){None=>true,Some((imp,old,ord,_))=>d.important>*imp||(d.important==*imp&&(spec>*old||(spec==*old&&order>=*ord)))};if replace{chosen.insert(d.property.clone(),(d.important,spec,order,d.value.clone()));}}}
-    for(p,(_,_,_,v))in chosen{apply(&mut out,&p,v);} out
+    for (order,rule) in active.iter().enumerate() {
+        let sel=parse_selector(&rule.selector);
+        if !matches_with_context(&sel,node,ancestors,previous_siblings,following_siblings) { continue; }
+        let spec=specificity(&sel);
+        for d in &rule.declarations {
+            let replace=match chosen.get(&d.property) {
+                None=>true,
+                Some((imp,old,ord,_))=>d.important>*imp||(d.important==*imp&&(spec>*old||(spec==*old&&order>=*ord)))
+            };
+            if replace { chosen.insert(d.property.clone(),(d.important,spec,order,d.value.clone())); }
+        }
+    }
+    // Inline declarations have higher specificity than stylesheet selectors; !important is preserved.
+    if let Some(inline)=node.attributes.get("style") {
+        for (order,d) in super::parser::parse_declarations(inline).iter().enumerate() {
+            let spec=super::selector::Specificity(u32::MAX,u32::MAX,u32::MAX);
+            let replace=match chosen.get(&d.property) {
+                None=>true,
+                Some((imp,old,ord,_))=>d.important>*imp||(d.important==*imp&&(spec>*old||(spec==*old&&order>=*ord)))
+            };
+            if replace { chosen.insert(d.property.clone(),(d.important,spec,usize::MAX-order,d.value.clone())); }
+        }
+    }
+    for(p,(_,_,_,v))in chosen { apply(&mut out,&p,v); }
+    out
 }
 fn apply(s:&mut ComputedStyle,p:&str,v:CssValue){
     match(p,v){
