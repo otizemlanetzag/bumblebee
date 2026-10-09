@@ -3,7 +3,7 @@ use super::css::{ComputedStyle, CssLength};
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect { pub x:f32, pub y:f32, pub width:f32, pub height:f32 }
 #[derive(Clone, Debug)]
-pub struct LayoutBox { pub node_id:usize, pub rect:Rect, pub style:ComputedStyle, pub children:Vec<LayoutBox> }
+pub struct LayoutBox { pub node_id:usize, pub rect:Rect, pub style:ComputedStyle, pub text:Option<String>, pub children:Vec<LayoutBox> }
 
 fn len(v:&CssLength,base:f32,font:f32,viewport:(f32,f32))->f32 {
     match v {
@@ -71,7 +71,7 @@ pub fn layout_node(id:usize,style:ComputedStyle,mut children:Vec<LayoutBox>,orig
             cursor+=if row {c.rect.width}else{c.rect.height}; cursor+=extra_gap;
         }
         let content_height=if explicit_height {height} else if row {cross_max.max(1.0)} else {final_used.max(1.0)};
-        return LayoutBox{node_id:id,rect:Rect{x:origin.0,y:origin.1,width,height:content_height},style,children};
+        return LayoutBox{node_id:id,rect:Rect{x:origin.0,y:origin.1,width,height:content_height},style,text:None,children};
     }
 
     if style.display=="grid" || style.display=="inline-grid" {
@@ -113,7 +113,7 @@ pub fn layout_root(id:usize,style:ComputedStyle,viewport:(f32,f32))->LayoutBox {
 mod tests {
  use super::*;
  #[test] fn flex_grow_distributes_remaining_space() {
-   let mut a=LayoutBox{node_id:1,rect:Rect{x:0.0,y:0.0,width:100.0,height:20.0},style:ComputedStyle{flex_grow:1.0,..ComputedStyle::default()},children:vec![]};
+   let mut a=LayoutBox{node_id:1,rect:Rect{x:0.0,y:0.0,width:100.0,height:20.0},style:ComputedStyle{flex_grow:1.0,..ComputedStyle::default()},text:None,children:vec![]};
    let mut b=a.clone(); b.node_id=2;
    let parent=ComputedStyle{display:"flex".into(),..ComputedStyle::default()};
    let out=layout_node(0,parent,vec![a.clone(),b.clone()],(0.0,0.0),(400.0,100.0),(400.0,100.0));
