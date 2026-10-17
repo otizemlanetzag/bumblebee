@@ -13,14 +13,13 @@ pub(crate) enum Stmt { Expression(Expr), Declaration { name: String, value: Expr
 #[derive(Debug, PartialEq)]
 pub(crate) enum Expr {
     Literal(Value), Identifier(String),
+    Assign { name: String, value: Box<Expr> },
     Unary { op: String, value: Box<Expr> },
     Binary { op: String, left: Box<Expr>, right: Box<Expr> },
 }
-
 pub(crate) struct Parser { tokens: Vec<Token>, cursor: usize }
 impl Parser {
     pub(crate) fn new(tokens: Vec<Token>) -> Self { Self { tokens, cursor: 0 } }
-
     pub(crate) fn parse_program(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut out = Vec::new();
         while !matches!(self.peek(), TokenKind::Eof) {
@@ -31,7 +30,6 @@ impl Parser {
         }
         Ok(out)
     }
-
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         let constant = match self.peek() {
             TokenKind::Let => { self.advance(); Some(false) },
@@ -43,16 +41,13 @@ impl Parser {
                 TokenKind::Identifier(n) => n,
                 _ => return Err(self.error("expected binding name")),
             };
-            if !matches!(self.peek(), TokenKind::Equal) {
-                return Err(self.error("expected '=' after binding name"));
-            }
+            if !matches!(self.peek(), TokenKind::Equal) { return Err(self.error("expected '=' after binding name")); }
             self.advance();
             let value = self.expression(0)?;
             return Ok(Stmt::Declaration { name, value, constant });
         }
         Ok(Stmt::Expression(self.expression(0)?))
     }
-
     fn expression(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
         let token = self.advance().clone();
         let mut lhs = match token.kind {
@@ -74,6 +69,16 @@ impl Parser {
             _ => return Err(ParseError { offset: token.offset, message: "expected expression".into() }),
         };
         loop {
+            if matches!(self.peek(), TokenKind::Equal) {
+                if 0 < min_bp { break; }
+                let Some(name) = (match &lhs { Expr::Identifier(n) => Some(n.clone()), _ => None }) else {
+                    return Err(self.error("invalid assignment target"));
+                };
+                self.advance();
+                let rhs = self.expression(0)?;
+                lhs = Expr::Assign { name, value: Box::new(rhs) };
+                continue;
+            }
             let (op, left_bp, right_bp) = match self.peek() {
                 TokenKind::OrOr => ("||", 1, 2), TokenKind::AndAnd => ("&&", 3, 4),
                 TokenKind::EqualEqual => ("==", 5, 6), TokenKind::StrictEqual => ("===", 5, 6),
@@ -92,8 +97,13 @@ impl Parser {
         }
         Ok(lhs)
     }
-
     fn peek(&self) -> &TokenKind { &self.tokens[self.cursor].kind }
-    fn advance(&mut self) -> &Token { let i = self.cursor; if self.cursor + 1 < self.tokens.len() { self.cursor += 1; } &self.tokens[i] }
-    fn error(&self, message: &str) -> ParseError { ParseError { offset: self.tokens[self.cursor].offset, message: message.into() } }
+    fn advance(&mut self) -> &Token {
+        let i = self.cursor;
+        if self.cursor + 1 < self.tokens.len() { self.cursor += 1; }
+        &self.tokens[i]
+    }
+    fn error(&self, message: &str) -> ParseError {
+        ParseError { offset: self.tokens[self.cursor].offset, message: message.into() }
+    }
 }
