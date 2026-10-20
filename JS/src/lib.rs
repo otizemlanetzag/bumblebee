@@ -62,8 +62,8 @@ if key=="sort"{
   for i in 1..items.len(){
    let mut j=i;
    while j>0{
-    let ordering=if matches!(items[j],Value::Undefined){std::cmp::Ordering::Greater}
-    else if matches!(items[j-1],Value::Undefined){std::cmp::Ordering::Less}
+    let ordering=if matches!(&items[j],Value::Undefined){std::cmp::Ordering::Greater}
+    else if matches!(&items[j-1],Value::Undefined){std::cmp::Ordering::Less}
     else if let Some(fun)=&comparator{
      let result=self.call_user_function(fun.clone(),vec![items[j].clone(),items[j-1].clone()])?;
      let number=self.to_number(result)?;
