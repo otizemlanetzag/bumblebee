@@ -19,8 +19,8 @@ fn json_encode(v:&Value,in_array:bool,depth:usize)->Option<String>{if depth>256{
 #[derive(Debug,PartialEq)]pub enum EngineError{Lex(LexError),Parse(ParseError),Type(String),Reference(String),Syntax(String)}
 impl std::fmt::Display for EngineError{fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result{match self{Self::Lex(e)=>write!(f,"lex error: {e}"),Self::Parse(e)=>write!(f,"parse error: {e}"),Self::Type(s)=>write!(f,"type error: {s}"),Self::Reference(s)=>write!(f,"reference error: {s}"),Self::Syntax(s)=>write!(f,"syntax error: {s}")}}}impl std::error::Error for EngineError{}impl From<LexError> for EngineError{fn from(e:LexError)->Self{Self::Lex(e)}}impl From<ParseError> for EngineError{fn from(e:ParseError)->Self{Self::Parse(e)}}
 #[derive(Clone,Debug,PartialEq)]struct Binding{value:Value,constant:bool}
-#[derive(Clone,Debug,PartialEq)]type Scope=Rc<RefCell<HashMap<String,Binding>>>;
-struct Function{params:Vec<String>,body:Vec<Stmt>,closure:Option<Vec<Scope>>}
+ type Scope=Rc<RefCell<HashMap<String,Binding>>>;
+#[derive(Clone,Debug,PartialEq)]struct Function{params:Vec<String>,body:Vec<Stmt>,closure:Option<Vec<Scope>>}
 enum Flow{Value(Value),Return(Value),Break,Continue}
 pub struct Runtime{scopes:Vec<Scope>,functions:HashMap<String,Function>,output:Vec<String>,call_depth:usize,loop_depth:usize}
 impl Default for Runtime{fn default()->Self{Self{scopes:vec![Rc::new(RefCell::new(HashMap::new()))],functions:HashMap::new(),output:Vec::new(),call_depth:0,loop_depth:0}}}
