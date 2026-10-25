@@ -72,33 +72,6 @@ if matches!((&*object,key.as_str()),(Expr::Identifier(name),"keys"|"values"|"ent
  }).collect();
  return Ok(Value::Array(Rc::new(RefCell::new(result))))
 }
-if matches!((&*object,key.as_str()),(Expr::Identifier(name),"hasOwn"|"hasOwnProperty") if name=="Object"){
- let values=self.evaluate_arguments(args)?;
- let target=values.first().cloned().unwrap_or(Value::Undefined);
- let property=values.get(1).map(Value::display).unwrap_or_else(||"undefined".into());
- let owns=match target{
-  Value::Object(o)=>o.borrow().contains_key(&property),
-  Value::Array(a)=>property.parse::<usize>().ok().map(|i|i<a.borrow().len()).unwrap_or(property=="length"),
-  Value::String(st)=>property.parse::<usize>().ok().map(|i|i<st.encode_utf16().count()).unwrap_or(property=="length"),
-  _=>false
- };
- return Ok(Value::Boolean(owns))
-}
-if matches!((&*object,key.as_str()),(Expr::Identifier(name),"assign") if name=="Object"){
- let values=self.evaluate_arguments(args)?;
- let mut target=match values.first(){Some(Value::Object(o))=>o.clone(),_=>return Err(EngineError::Type("Object.assign target must be an object".into()))};
- for source in values.iter().skip(1){
-  match source{
-   Value::Object(o)=>{for (k,v) in o.borrow().iter(){target.borrow_mut().insert(k.clone(),v.clone());}},
-   Value::Array(a)=>{for (i,v) in a.borrow().iter().enumerate(){target.borrow_mut().insert(i.to_string(),v.clone());}},
-   Value::String(st)=>{for (i,c) in st.chars().enumerate(){target.borrow_mut().insert(i.to_string(),Value::String(c.to_string()));}},
-   Value::Null|Value::Undefined=>{},
-   _=>{}
-  }
- }
- return Ok(Value::Object(target))
-}
-
 if key=="sort"||key=="toSorted"{
  let target=self.evaluate((*object).clone())?;
  if let Value::Array(array)=target.clone(){
@@ -283,6 +256,5 @@ fn loose(a:&Value,b:&Value,r:&Runtime)->Result<bool,EngineError>{if equal(a,b){r
 #[test]fn object_entries_returns_key_value_pairs(){let mut r=Runtime::new();assert_eq!(r.execute("Object.entries({a:3})[0][1];").unwrap(),Value::Number(3.0));}
 #[test]fn object_keys_supports_arrays_and_strings(){let mut r=Runtime::new();assert_eq!(r.execute("Object.keys(['x','y']).join(',') + ':' + Object.keys('cat').join(',');").unwrap(),Value::String("0,1:0,1,2".into()));}
 
-#[test]fn object_assign_copies_own_properties(){let mut r=Runtime::new();assert_eq!(r.execute("let target={a:1};Object.assign(target,{b:2});target.a+target.b;").unwrap(),Value::Number(3.0));}
 #[test]fn object_has_own_checks_keys(){let mut r=Runtime::new();assert_eq!(r.execute("Object.hasOwn({a:1},'a') && !Object.hasOwn({a:1},'b');").unwrap(),Value::Boolean(true));}
 }
