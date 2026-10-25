@@ -54,6 +54,24 @@ Expr::Conditional{condition,yes,no}=>if self.evaluate(*condition)?.truthy(){self
 Expr::DeleteMember{object,key}=>{let target=self.evaluate(*object)?;match target{Value::Object(o)=>Ok(Value::Boolean(o.borrow_mut().remove(&key).is_some())),Value::Array(a)if key!="length"=>{if let Ok(i)=key.parse::<usize>(){let mut a=a.borrow_mut();if i<a.len(){a[i]=Value::Undefined;}}Ok(Value::Boolean(true))},Value::Array(_)=>Ok(Value::Boolean(false)),Value::String(_)=>Ok(Value::Boolean(false)),_=>Ok(Value::Boolean(true))}},Expr::DeleteIndex{object,index}=>{let target=self.evaluate(*object)?;let ix=self.evaluate(*index)?;let key=ix.display();match target{Value::Object(o)=>Ok(Value::Boolean(o.borrow_mut().remove(&key).is_some())),Value::Array(a)=>{if let Ok(i)=key.parse::<usize>(){let mut a=a.borrow_mut();if i<a.len(){a[i]=Value::Undefined;}}Ok(Value::Boolean(true))},Value::String(_)=>Ok(Value::Boolean(false)),_=>Ok(Value::Boolean(true))}},Expr::Unary{op,value}=>{if op=="typeof"{if let Expr::Identifier(ref name)=*value{if self.lookup(name).is_none()&&!self.functions.contains_key(name){return Ok(Value::String("undefined".into()))}}}let v=self.evaluate(*value)?;match op.as_str(){"!"=>Ok(Value::Boolean(!v.truthy())),"typeof"=>Ok(Value::String(match v{Value::Undefined=>"undefined",Value::Null=>"object",Value::Boolean(_)=>"boolean",Value::Number(_)=>"number",Value::String(_)=>"string",Value::Array(_)|Value::Object(_)=>"object",Value::Function(_)=>"function",Value::Function(_)=>"function"}.into())),"void"=>Ok(Value::Undefined),"+"=>self.to_number(v).map(Value::Number),"-"=>self.to_number(v).map(|n|Value::Number(-n)),_=>Err(EngineError::Syntax(format!("unsupported unary operator {op}")))}},
 Expr::Binary{op,left,right}=>{let a=self.evaluate(*left)?;if op=="&&"&&!a.truthy(){return Ok(a)}if op=="||"&&a.truthy(){return Ok(a)}if op=="??"&&!matches!(a,Value::Null|Value::Undefined){return Ok(a)}let b=self.evaluate(*right)?;self.binary(&op,a,b)},
 Expr::MethodCall{object,key,args}=>{
+if matches!((&*object,key.as_str()),(Expr::Identifier(name),"keys"|"values"|"entries") if name=="Object"){
+ let source=args.first().cloned().ok_or_else(||EngineError::Type(format!("Object.{key} requires an argument")))?;
+ let value=self.evaluate(source)?;
+ let entries:Vec<(String,Value)>=match value{
+  Value::Object(object)=>{let mut pairs:Vec<_>=object.borrow().iter().map(|(k,v)|(k.clone(),v.clone())).collect();pairs.sort_by(|a,b|a.0.encode_utf16().cmp(b.0.encode_utf16()));pairs},
+  Value::Array(array)=>array.borrow().iter().enumerate().map(|(i,v)|(i.to_string(),v.clone())).collect(),
+  Value::String(string)=>string.chars().enumerate().map(|(i,c)|(i.to_string(),Value::String(c.to_string()))).collect(),
+  Value::Null|Value::Undefined=>return Err(EngineError::Type(format!("Cannot convert undefined or null to object"))),
+  _=>Vec::new()
+ };
+ let result=entries.into_iter().map(|(k,v)|match key.as_str(){
+  "keys"=>Value::String(k),
+  "values"=>v,
+  "entries"=>Value::Array(Rc::new(RefCell::new(vec![Value::String(k),v]))),
+  _=>unreachable!()
+ }).collect();
+ return Ok(Value::Array(Rc::new(RefCell::new(result))))
+}
 if key=="sort"||key=="toSorted"{
  let target=self.evaluate((*object).clone())?;
  if let Value::Array(array)=target.clone(){
