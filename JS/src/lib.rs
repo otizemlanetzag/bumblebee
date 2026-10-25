@@ -261,4 +261,6 @@ fn loose(a:&Value,b:&Value,r:&Runtime)->Result<bool,EngineError>{if equal(a,b){r
 
 #[test]fn math_inverse_hyperbolic_functions(){let mut r=Runtime::new();assert!((match r.execute("Math.asinh(0);").unwrap(){Value::Number(n)=>n,_=>panic!("expected number")}).abs()<1e-12);assert!((match r.execute("Math.acosh(1);").unwrap(){Value::Number(n)=>n,_=>panic!("expected number")}).abs()<1e-12);assert!((match r.execute("Math.atanh(0);").unwrap(){Value::Number(n)=>n,_=>panic!("expected number")}).abs()<1e-12);}
 #[test]fn math_inverse_hyperbolic_domain_edges(){let mut r=Runtime::new();assert!(matches!(r.execute("Math.acosh(0);").unwrap(),Value::Number(n) if n.is_nan()));assert!(matches!(r.execute("Math.atanh(1);").unwrap(),Value::Number(n) if n.is_infinite()));}
+
+#[test]fn math_cbrt_and_hypot_edge_cases(){let mut r=Runtime::new();assert_eq!(r.execute("Math.cbrt(-8);").unwrap(),Value::Number(-2.0));assert_eq!(r.execute("Math.hypot(3,4);").unwrap(),Value::Number(5.0));}
 }
