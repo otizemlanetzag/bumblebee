@@ -54,7 +54,7 @@ Expr::Conditional{condition,yes,no}=>if self.evaluate(*condition)?.truthy(){self
 Expr::DeleteMember{object,key}=>{let target=self.evaluate(*object)?;match target{Value::Object(o)=>Ok(Value::Boolean(o.borrow_mut().remove(&key).is_some())),Value::Array(a)if key!="length"=>{if let Ok(i)=key.parse::<usize>(){let mut a=a.borrow_mut();if i<a.len(){a[i]=Value::Undefined;}}Ok(Value::Boolean(true))},Value::Array(_)=>Ok(Value::Boolean(false)),Value::String(_)=>Ok(Value::Boolean(false)),_=>Ok(Value::Boolean(true))}},Expr::DeleteIndex{object,index}=>{let target=self.evaluate(*object)?;let ix=self.evaluate(*index)?;let key=ix.display();match target{Value::Object(o)=>Ok(Value::Boolean(o.borrow_mut().remove(&key).is_some())),Value::Array(a)=>{if let Ok(i)=key.parse::<usize>(){let mut a=a.borrow_mut();if i<a.len(){a[i]=Value::Undefined;}}Ok(Value::Boolean(true))},Value::String(_)=>Ok(Value::Boolean(false)),_=>Ok(Value::Boolean(true))}},Expr::Unary{op,value}=>{if op=="typeof"{if let Expr::Identifier(ref name)=*value{if self.lookup(name).is_none()&&!self.functions.contains_key(name){return Ok(Value::String("undefined".into()))}}}let v=self.evaluate(*value)?;match op.as_str(){"!"=>Ok(Value::Boolean(!v.truthy())),"typeof"=>Ok(Value::String(match v{Value::Undefined=>"undefined",Value::Null=>"object",Value::Boolean(_)=>"boolean",Value::Number(_)=>"number",Value::String(_)=>"string",Value::Array(_)|Value::Object(_)=>"object",Value::Function(_)=>"function",Value::Function(_)=>"function"}.into())),"void"=>Ok(Value::Undefined),"+"=>self.to_number(v).map(Value::Number),"-"=>self.to_number(v).map(|n|Value::Number(-n)),_=>Err(EngineError::Syntax(format!("unsupported unary operator {op}")))}},
 Expr::Binary{op,left,right}=>{let a=self.evaluate(*left)?;if op=="&&"&&!a.truthy(){return Ok(a)}if op=="||"&&a.truthy(){return Ok(a)}if op=="??"&&!matches!(a,Value::Null|Value::Undefined){return Ok(a)}let b=self.evaluate(*right)?;self.binary(&op,a,b)},
 Expr::MethodCall{object,key,args}=>{
-if matches!((&*object,key.as_str()),(Expr::Identifier(name),"keys"|"values"|"entries") if name=="Object"){
+if matches!((&*object,key.as_str()),(Expr::Identifier(name),"keys"|"values"|"entries"|"getOwnPropertyNames") if name=="Object"){
  let source=args.first().cloned().ok_or_else(||EngineError::Type(format!("Object.{key} requires an argument")))?;
  let value=self.evaluate(source)?;
  let entries:Vec<(String,Value)>=match value{
@@ -65,7 +65,7 @@ if matches!((&*object,key.as_str()),(Expr::Identifier(name),"keys"|"values"|"ent
   _=>Vec::new()
  };
  let result=entries.into_iter().map(|(k,v)|match key.as_str(){
-  "keys"=>Value::String(k),
+  "keys"|"getOwnPropertyNames"=>Value::String(k),
   "values"=>v,
   "entries"=>Value::Array(Rc::new(RefCell::new(vec![Value::String(k),v]))),
   _=>unreachable!()
@@ -251,6 +251,7 @@ fn loose(a:&Value,b:&Value,r:&Runtime)->Result<bool,EngineError>{if equal(a,b){r
 #[test]fn arrow_functions_support_single_parameters_and_closures(){let mut r=Runtime::new();assert_eq!(r.execute("let offset = 7; let addOffset = x => x + offset; addOffset(5);").unwrap(),Value::Number(12.0));assert_eq!(r.execute("let sum = (a, b) => a + b; sum(2, 9);").unwrap(),Value::Number(11.0));}
 #[test]fn function_name_and_length_properties(){let mut r=Runtime::new();assert_eq!(r.execute("(function named(a,b,...rest) { return a; }).name;").unwrap(),Value::String("named".into()));assert_eq!(r.execute("(function named(a,b,...rest) { return a; }).length;").unwrap(),Value::Number(2.0));assert_eq!(r.execute("(x => x).name;").unwrap(),Value::String("".into()));assert_eq!(r.execute("(x => x).length;").unwrap(),Value::Number(1.0));}
 
+#[test]fn object_get_own_property_names_returns_keys(){let mut r=Runtime::new();assert_eq!(r.execute("Object.getOwnPropertyNames({z:1,a:2}).join(',');").unwrap(),Value::String("a,z".into()));}
 #[test]fn object_keys_returns_sorted_own_keys(){let mut r=Runtime::new();assert_eq!(r.execute("Object.keys({b:2,a:1}).join(',');").unwrap(),Value::String("a,b".into()));}
 #[test]fn object_values_preserves_key_order(){let mut r=Runtime::new();assert_eq!(r.execute("Object.values({b:2,a:1}).join(',');").unwrap(),Value::String("1,2".into()));}
 #[test]fn object_entries_returns_key_value_pairs(){let mut r=Runtime::new();assert_eq!(r.execute("Object.entries({a:3})[0][1];").unwrap(),Value::Number(3.0));}
