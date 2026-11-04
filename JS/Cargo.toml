@@ -11,6 +11,9 @@ path = "src/lib.rs"
 name = "bumblebee-js"
 path = "src/main.rs"
 
+[dependencies]
+rquickjs = "0.14"
+
 [profile.release]
 lto = true
 codegen-units = 1
