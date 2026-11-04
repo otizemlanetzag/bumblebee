@@ -27,4 +27,4 @@ cargo test --manifest-path JS/Cargo.toml
 cargo run --manifest-path JS/Cargo.toml -- path/to/script.js\n# Run the currently supported AOT bytecode subset\ncargo run --manifest-path JS/Cargo.toml -- --aot path/to/script.js
 ```
 
-The current implementation is intentionally small and should be expanded against ECMAScript conformance tests before being described as browser-ready.
+The embedded engine provides the JavaScript language runtime. Bumblebee must still implement browser-facing APIs and integration layers (DOM, HTML elements, Fetch, timers, rendering hooks, and navigation).
