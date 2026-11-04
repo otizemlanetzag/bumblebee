@@ -14,7 +14,7 @@ All project files belong inside one of the four subsystem directories, except th
 
 ## Current milestone
 
-The JavaScript crate starts with a dependency-free tokenizer, Pratt expression parser, a small value model, and a minimal runtime for literals, arithmetic, comparisons, logical operators, and `let`/`const` bindings. This is a foundation, not a complete ECMAScript implementation.
+The JavaScript crate includes a tokenizer, Pratt parser, runtime, and the first Ahead-of-Time (AOT) compiler stage. AOT compiles supported expressions to portable stack bytecode before execution; it is not JIT and does not generate native machine code yet. The current AOT subset covers literals, arithmetic, bitwise operations, shifts, and comparisons. Unsupported syntax fails explicitly. The legacy interpreter remains temporarily available while more syntax is lowered to bytecode.
 
 ## Build and test
 
@@ -22,7 +22,7 @@ Run from the repository root:
 
 ```sh
 cargo test --manifest-path JS/Cargo.toml
-cargo run --manifest-path JS/Cargo.toml -- path/to/script.js
+cargo run --manifest-path JS/Cargo.toml -- path/to/script.js\n# Run the currently supported AOT bytecode subset\ncargo run --manifest-path JS/Cargo.toml -- --aot path/to/script.js
 ```
 
 The current implementation is intentionally small and should be expanded against ECMAScript conformance tests before being described as browser-ready.
