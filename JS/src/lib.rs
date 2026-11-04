@@ -1,5 +1,6 @@
 //! Original Rust JavaScript runtime subset; not yet a complete ECMAScript implementation.
-mod lexer;mod parser;
+mod lexer;mod parser;mod aot;
+pub use aot::{compile_aot, CompiledProgram};
 use std::{cell::RefCell,collections::HashMap,rc::Rc};
 pub use lexer::{LexError,Token,TokenKind};use parser::{Expr,ParseError,Parser,Stmt};
 #[derive(Clone,Debug,PartialEq)]pub enum Value{Number(f64),String(String),Boolean(bool),Null,Undefined,Array(Rc<RefCell<Vec<Value>>>),Object(Rc<RefCell<HashMap<String,Value>>>),Function(Rc<Function>)}
