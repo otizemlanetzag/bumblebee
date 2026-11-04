@@ -14,7 +14,9 @@ All project files belong inside one of the four subsystem directories, except th
 
 ## Current milestone
 
-The JavaScript crate includes a tokenizer, Pratt parser, runtime, and the first Ahead-of-Time (AOT) compiler stage. AOT compiles supported expressions to portable stack bytecode before execution; it is not JIT and does not generate native machine code yet. The current AOT subset covers literals, arithmetic, bitwise operations, shifts, and comparisons. Unsupported syntax fails explicitly. The legacy interpreter remains temporarily available while more syntax is lowered to bytecode.
+The JavaScript subsystem now embeds the QuickJS engine through the Rust `rquickjs` bindings. Bumblebee delegates ECMAScript parsing, execution, built-ins, objects, functions, promises, and garbage collection to QuickJS instead of maintaining a separate partial JavaScript implementation. The wrapper keeps a persistent global context and applies a default 256 MiB JavaScript heap limit.
+
+QuickJS compiles scripts to its own internal bytecode during loading/evaluation. This is not native-code AOT compilation and it is not a JIT engine. The old experimental in-repository parser, interpreter, and bytecode compiler are no longer part of the active build. Browser APIs such as DOM, Fetch, and timers still need to be implemented by Bumblebee and exposed to JavaScript.
 
 ## Build and test
 
