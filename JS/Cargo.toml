@@ -12,7 +12,7 @@ name = "bumblebee-js"
 path = "src/main.rs"
 
 [dependencies]
-rquickjs = "0.14"
+rquickjs = { version = "0.14", features = ["loader"] }
 
 [profile.release]
 lto = true
