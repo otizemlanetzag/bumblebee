@@ -550,6 +550,18 @@ impl Framebuffer {
         }
     }
 
+    /// Clears only the current clipping rectangle to transparent pixels.
+    fn clear_transparent_in_clip(&mut self) {
+        let (left, top, right, bottom) = self.clip.unwrap_or((0, 0, self.width, self.height));
+        if left >= right || top >= bottom { return; }
+        for y in top..bottom {
+            let start = self.offset(left, y);
+            let end = self.offset(right, y);
+            self.pixels[start..end].fill(0);
+        }
+        self.mark_dirty_region(left as i32, top as i32, right - left, bottom - top);
+    }
+
     /// Clears the framebuffer to fully transparent pixels.
     /// Unlike clear(), this is useful for off-screen compositing layers.
     pub fn clear_transparent(&mut self) {
@@ -1327,6 +1339,117 @@ impl Layer {
     }
 }
 
+/// Ordered collection of rendering layers with region-aware scene recomposition.
+///
+/// Mutate pixel content through `framebuffer_mut`; change layer properties through
+/// the stack setters so the compositor knows when a full rebuild is required.
+pub struct LayerStack {
+    width: u32,
+    height: u32,
+    layers: Vec<Layer>,
+    full_rebuild: bool,
+}
+
+impl LayerStack {
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        if width == 0 || height == 0 {
+            return Err("layer stack dimensions must be greater than zero".into());
+        }
+        Ok(Self { width, height, layers: Vec::new(), full_rebuild: true })
+    }
+
+    pub fn len(&self) -> usize { self.layers.len() }
+    pub fn is_empty(&self) -> bool { self.layers.is_empty() }
+
+    pub fn add_layer(&mut self) -> Result<usize, String> {
+        let layer = Layer::new(self.width, self.height)?;
+        self.layers.push(layer);
+        self.full_rebuild = true;
+        Ok(self.layers.len() - 1)
+    }
+
+    pub fn framebuffer(&self, index: usize) -> Option<&Framebuffer> {
+        self.layers.get(index).map(Layer::framebuffer)
+    }
+
+    /// Access a layer's drawing surface without invalidating the whole scene.
+    /// Drawing operations automatically record the changed regions.
+    pub fn framebuffer_mut(&mut self, index: usize) -> Option<&mut Framebuffer> {
+        self.layers.get_mut(index).map(Layer::framebuffer_mut)
+    }
+
+    pub fn set_opacity(&mut self, index: usize, opacity: u8) -> Result<(), String> {
+        let layer = self.layers.get_mut(index).ok_or("layer index out of range")?;
+        if layer.opacity() != opacity {
+            layer.set_opacity(opacity);
+            self.full_rebuild = true;
+        }
+        Ok(())
+    }
+
+    pub fn set_visible(&mut self, index: usize, visible: bool) -> Result<(), String> {
+        let layer = self.layers.get_mut(index).ok_or("layer index out of range")?;
+        if layer.is_visible() != visible {
+            layer.set_visible(visible);
+            self.full_rebuild = true;
+        }
+        Ok(())
+    }
+
+    /// Rebuilds the complete scene from transparent pixels, in layer order.
+    pub fn composite_into(&mut self, target: &mut Framebuffer) -> Result<(), String> {
+        self.check_target(target)?;
+        let previous_clip = target.clip;
+        target.clip = None;
+        target.clear_transparent();
+        for layer in &self.layers {
+            layer.composite_into(target)?;
+        }
+        target.clip = previous_clip;
+        self.full_rebuild = false;
+        Ok(())
+    }
+
+    /// Re-renders only regions changed in any layer. Each affected target region
+    /// is cleared and all layers are replayed there, preserving correct stacking
+    /// when a lower layer changes beneath an unchanged upper layer.
+    pub fn composite_dirty_into(&mut self, target: &mut Framebuffer) -> Result<usize, String> {
+        self.check_target(target)?;
+        if self.full_rebuild {
+            self.composite_into(target)?;
+            return Ok(1);
+        }
+
+        let mut dirty = Framebuffer::new(self.width, self.height)?;
+        for layer in &self.layers {
+            for region in layer.framebuffer().dirty_regions() {
+                dirty.mark_dirty_region(region.x as i32, region.y as i32, region.width, region.height);
+            }
+        }
+        let regions = dirty.take_dirty_regions();
+        let mut redrawn = 0usize;
+
+        for region in regions {
+            target.save_clip();
+            target.intersect_clip(region.x as i32, region.y as i32, region.width, region.height);
+            target.clear_transparent_in_clip();
+            for layer in &self.layers {
+                layer.composite_into(target)?;
+            }
+            target.restore_clip();
+            redrawn += 1;
+        }
+        Ok(redrawn)
+    }
+
+    fn check_target(&self, target: &Framebuffer) -> Result<(), String> {
+        if target.width != self.width || target.height != self.height {
+            return Err("layer stack and target framebuffer dimensions must match".into());
+        }
+        Ok(())
+    }
+}
+
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
 }
@@ -1488,6 +1611,45 @@ mod tests {
         assert_eq!(layer.composite_dirty_into(&mut target).unwrap(), 0);
         assert_eq!(target.pixels, vec![0, 0, 0, 0]);
     }
+    #[test]
+    fn layer_stack_recomposes_only_changed_regions_with_all_layers() {
+        let mut stack = LayerStack::new(3, 1).unwrap();
+        let bottom = stack.add_layer().unwrap();
+        let top = stack.add_layer().unwrap();
+        stack.framebuffer_mut(bottom).unwrap().pixels[0..12]
+            .copy_from_slice(&[255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255]);
+        stack.framebuffer_mut(top).unwrap().pixels[0..4]
+            .copy_from_slice(&[0, 0, 255, 255]);
+        stack.framebuffer_mut(bottom).unwrap().mark_dirty_region(0, 0, 3, 1);
+        stack.framebuffer_mut(top).unwrap().mark_dirty_region(0, 0, 1, 1);
+
+        let mut target = Framebuffer::new(3, 1).unwrap();
+        assert_eq!(stack.composite_dirty_into(&mut target).unwrap(), 1);
+        assert_eq!(&target.pixels[0..4], &[0, 0, 255, 255]);
+        assert_eq!(&target.pixels[4..8], &[255, 0, 0, 255]);
+
+        stack.framebuffer_mut(bottom).unwrap().pixels[4..8]
+            .copy_from_slice(&[0, 255, 0, 255]);
+        stack.framebuffer_mut(bottom).unwrap().mark_dirty_region(1, 0, 1, 1);
+        assert_eq!(stack.composite_dirty_into(&mut target).unwrap(), 1);
+        assert_eq!(&target.pixels[4..8], &[0, 255, 0, 255]);
+        assert_eq!(&target.pixels[0..4], &[0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn layer_stack_property_changes_force_full_rebuild() {
+        let mut stack = LayerStack::new(1, 1).unwrap();
+        let index = stack.add_layer().unwrap();
+        stack.framebuffer_mut(index).unwrap().pixels.copy_from_slice(&[255, 0, 0, 255]);
+        let mut target = Framebuffer::new(1, 1).unwrap();
+        stack.composite_dirty_into(&mut target).unwrap();
+        assert_eq!(&target.pixels, &[255, 0, 0, 255]);
+
+        stack.set_visible(index, false).unwrap();
+        assert_eq!(stack.composite_dirty_into(&mut target).unwrap(), 1);
+        assert_eq!(&target.pixels, &[0, 0, 0, 0]);
+    }
+
     #[test]
     fn layer_rejects_different_framebuffer_dimensions() {
         let layer = Layer::new(2, 2).unwrap();
