@@ -397,17 +397,11 @@ impl Framebuffer {
         color: Color,
     ) {
         if width == 0 || height == 0 || thickness == 0 { return; }
-        let radius = radius.min(width / 2).min(height / 2) as f64;
-        let thickness = thickness.min(width / 2).min(height / 2) as f64;
-        let outer_left = x as f64 + radius;
-        let outer_right = x as f64 + width as f64 - radius;
-        let outer_top = y as f64 + radius;
-        let outer_bottom = y as f64 + height as f64 - radius;
-        let inner_radius = (radius - thickness).max(0.0);
-        let inner_left = x as f64 + thickness + inner_radius;
-        let inner_right = x as f64 + width as f64 - thickness - inner_radius;
-        let inner_top = y as f64 + thickness + inner_radius;
-        let inner_bottom = y as f64 + height as f64 - thickness - inner_radius;
+        let outer_radius = radius.min(width / 2).min(height / 2) as f64;
+        let inset = thickness.min(width / 2).min(height / 2);
+        let inner_width = width.saturating_sub(inset * 2);
+        let inner_height = height.saturating_sub(inset * 2);
+        let inner_radius = outer_radius.saturating_sub(inset as f64);
         let c = palette.sample(color);
         let left = (x as i64).max(0);
         let top = (y as i64).max(0);
@@ -415,22 +409,33 @@ impl Framebuffer {
         let bottom = (y as i64 + height as i64).min(self.height as i64);
         if left >= right || top >= bottom { return; }
 
+        let contains = |px: f64, py: f64, rx: f64, ry: f64, rw: f64, rh: f64, r: f64| {
+            if rw <= 0.0 || rh <= 0.0 || px < rx || py < ry || px >= rx + rw || py >= ry + rh {
+                return false;
+            }
+            if r <= 0.0 { return true; }
+            let cx = px.clamp(rx + r, rx + rw - r);
+            let cy = py.clamp(ry + r, ry + rh - r);
+            let dx = px - cx;
+            let dy = py - cy;
+            dx * dx + dy * dy <= r * r
+        };
+
         for py in top..bottom {
             for px in left..right {
                 let cx = px as f64 + 0.5;
                 let cy = py as f64 + 0.5;
-                let ox = (cx - outer_left).clamp(0.0, (outer_right - outer_left).max(0.0));
-                let oy = (cy - outer_top).clamp(0.0, (outer_bottom - outer_top).max(0.0));
-                let odx = cx - (outer_left + ox);
-                let ody = cy - (outer_top + oy);
-                let in_outer = odx * odx + ody * ody <= radius * radius || radius == 0.0;
+                let in_outer = contains(cx, cy, x as f64, y as f64, width as f64, height as f64, outer_radius);
                 if !in_outer { continue; }
-
-                let ix = (cx - inner_left).clamp(0.0, (inner_right - inner_left).max(0.0));
-                let iy = (cy - inner_top).clamp(0.0, (inner_bottom - inner_top).max(0.0));
-                let idx = cx - (inner_left + ix);
-                let idy = cy - (inner_top + iy);
-                let in_inner = inner_radius > 0.0 && idx * idx + idy * idy < inner_radius * inner_radius;
+                let in_inner = contains(
+                    cx,
+                    cy,
+                    x as f64 + inset as f64,
+                    y as f64 + inset as f64,
+                    inner_width as f64,
+                    inner_height as f64,
+                    inner_radius,
+                );
                 if !in_inner {
                     let offset = self.offset(px as u32, py as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
