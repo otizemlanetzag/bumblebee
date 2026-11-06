@@ -1451,14 +1451,37 @@ impl TiledSurface {
         Ok(self.tiles.get_mut(&(tile_x, tile_y)).expect("tile inserted"))
     }
 
-    pub fn set_pixel(&mut self, palette: &Palette, x: i32, y: i32, color: Color) {
-        if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height { return; }
+    /// Writes one pixel and reports allocation failures instead of silently dropping it.
+    pub fn try_set_pixel(&mut self, palette: &Palette, x: i32, y: i32, color: Color) -> Result<(), String> {
+        if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height { return Ok(()); }
         let (x, y) = (x as u32, y as u32);
         let tx = x / self.tile_size;
         let ty = y / self.tile_size;
-        if let Ok(tile) = self.tile_mut(tx, ty) {
-            tile.set_pixel(palette, (x % self.tile_size) as i32, (y % self.tile_size) as i32, color);
+        let tile = self.tile_mut(tx, ty)?;
+        tile.set_pixel(palette, (x % self.tile_size) as i32, (y % self.tile_size) as i32, color);
+        Ok(())
+    }
+
+    /// Convenience pixel write. Use try_set_pixel when allocation errors matter.
+    pub fn set_pixel(&mut self, palette: &Palette, x: i32, y: i32, color: Color) {
+        let _ = self.try_set_pixel(palette, x, y, color);
+    }
+
+    /// Alpha-composites a color over a pixel, allocating its tile only when needed.
+    pub fn blend_pixel(&mut self, palette: &Palette, x: i32, y: i32, color: Color, alpha: u8) -> Result<(), String> {
+        if alpha == 0 || x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height {
+            return Ok(());
         }
+        let (ux, uy) = (x as u32, y as u32);
+        let tile = self.tile_mut(ux / self.tile_size, uy / self.tile_size)?;
+        tile.blend_pixel(
+            palette,
+            (ux % self.tile_size) as i32,
+            (uy % self.tile_size) as i32,
+            color,
+            alpha,
+        );
+        Ok(())
     }
 
     /// Reads an RGBA pixel. Unallocated tiles are transparent.
@@ -1469,6 +1492,36 @@ impl TiledSurface {
         Some([tile.pixels[offset], tile.pixels[offset + 1], tile.pixels[offset + 2], tile.pixels[offset + 3]])
     }
 
+    /// Fills a rectangle across tile boundaries and reports allocation failures.
+    pub fn try_fill_rect(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        color: Color,
+    ) -> Result<(), String> {
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
+        if left >= right || top >= bottom { return Ok(()); }
+        for ty in (top / self.tile_size)..=((bottom - 1) / self.tile_size) {
+            for tx in (left / self.tile_size)..=((right - 1) / self.tile_size) {
+                let tile_left = tx * self.tile_size;
+                let tile_top = ty * self.tile_size;
+                let l = left.max(tile_left) - tile_left;
+                let t = top.max(tile_top) - tile_top;
+                let r = right.min(tile_left + self.tile_size) - tile_left;
+                let b = bottom.min(tile_top + self.tile_size) - tile_top;
+                self.tile_mut(tx, ty)?.fill_rect(palette, l as i32, t as i32, r-l, b-t, color);
+            }
+        }
+        Ok(())
+    }
+
+    /// Convenience rectangle fill. Use try_fill_rect when allocation errors matter.
     pub fn fill_rect(
         &mut self,
         palette: &Palette,
@@ -1478,24 +1531,7 @@ impl TiledSurface {
         height: u32,
         color: Color,
     ) {
-        let left = (x as i64).max(0).min(self.width as i64) as u32;
-        let top = (y as i64).max(0).min(self.height as i64) as u32;
-        let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
-        let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
-        if left >= right || top >= bottom { return; }
-        for ty in (top / self.tile_size)..=((bottom - 1) / self.tile_size) {
-            for tx in (left / self.tile_size)..=((right - 1) / self.tile_size) {
-                let tile_left = tx * self.tile_size;
-                let tile_top = ty * self.tile_size;
-                let l = left.max(tile_left) - tile_left;
-                let t = top.max(tile_top) - tile_top;
-                let r = right.min(tile_left + self.tile_size) - tile_left;
-                let b = bottom.min(tile_top + self.tile_size) - tile_top;
-                if let Ok(tile) = self.tile_mut(tx, ty) {
-                    tile.fill_rect(palette, l as i32, t as i32, r-l, b-t, color);
-                }
-            }
-        }
+        let _ = self.try_fill_rect(palette, x, y, width, height, color);
     }
 
 
@@ -1618,11 +1654,15 @@ impl TiledSurface {
         let t = thickness.min(width).min(height);
         self.fill_rect(palette, x, y, width, t, color);
         if height > t {
-            self.fill_rect(palette, x, (y as i64 + height as i64 - t as i64) as i32, width, t, color);
+            let bottom_y = (y as i64 + height as i64 - t as i64)
+                .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            self.fill_rect(palette, x, bottom_y, width, t, color);
         }
         self.fill_rect(palette, x, y, t, height, color);
         if width > t {
-            self.fill_rect(palette, (x as i64 + width as i64 - t as i64) as i32, y, t, height, color);
+            let right_x = (x as i64 + width as i64 - t as i64)
+                .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            self.fill_rect(palette, right_x, y, t, height, color);
         }
     }
 
@@ -2047,6 +2087,31 @@ mod tests {
             pixels[offset..offset + 3].copy_from_slice(&[color.r, color.g, color.b]);
         }
         Palette { pixels }
+    }
+
+    #[test]
+    fn tiled_surface_try_pixel_and_rect_write_across_tiles() {
+        let palette = test_palette();
+        let mut surface = TiledSurface::with_tile_size(8, 8, 4).unwrap();
+        surface.try_set_pixel(&palette, 4, 1, Color::rgb(12, 34, 56)).unwrap();
+        surface.try_fill_rect(&palette, 2, 3, 4, 2, Color::rgb(90, 80, 70)).unwrap();
+        assert_eq!(surface.pixel_rgba(4, 1), Some([12, 34, 56, 255]));
+        assert_eq!(surface.pixel_rgba(2, 3), Some([90, 80, 70, 255]));
+        assert_eq!(surface.pixel_rgba(5, 4), Some([90, 80, 70, 255]));
+        assert_eq!(surface.allocated_tiles(), 4);
+    }
+
+    #[test]
+    fn tiled_surface_alpha_blends_within_tile() {
+        let palette = test_palette();
+        let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
+        surface.try_set_pixel(&palette, 1, 1, Color::rgb(0, 0, 255)).unwrap();
+        surface.blend_pixel(&palette, 1, 1, Color::rgb(255, 0, 0), 128).unwrap();
+        let pixel = surface.pixel_rgba(1, 1).unwrap();
+        assert!(pixel[0] >= 127 && pixel[0] <= 128);
+        assert_eq!(pixel[1], 0);
+        assert!(pixel[2] >= 127 && pixel[2] <= 128);
+        assert_eq!(pixel[3], 255);
     }
 
     #[test]
