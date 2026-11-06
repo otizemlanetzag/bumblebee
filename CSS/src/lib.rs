@@ -1637,6 +1637,58 @@ impl TiledSurface {
         let _ = self.try_fill_ellipse(palette, center_x, center_y, radius_x, radius_y, color);
     }
 
+    /// Fills a rounded rectangle with scanline spans and reports allocation failures.
+    pub fn try_fill_rounded_rect(
+        &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
+        radius: u32, color: Color,
+    ) -> Result<(), String> {
+        if width == 0 || height == 0 { return Ok(()); }
+        let radius = radius.min(width / 2).min(height / 2) as i64;
+        let left_bound = x as i64;
+        let right_bound = left_bound + width as i64;
+        let top_bound = y as i64;
+        let bottom_bound = top_bound + height as i64;
+        let visible_top = top_bound.max(0);
+        let visible_bottom = bottom_bound.min(self.height as i64);
+        if visible_top >= visible_bottom || right_bound <= 0 || left_bound >= self.width as i64 {
+            return Ok(());
+        }
+
+        for row in visible_top..visible_bottom {
+            let mut inset = 0i64;
+            if radius > 0 {
+                let distance_from_top = row - top_bound;
+                let distance_from_bottom = bottom_bound - 1 - row;
+                let corner_distance = if distance_from_top < radius {
+                    Some(radius as f64 - distance_from_top as f64 - 0.5)
+                } else if distance_from_bottom < radius {
+                    Some(radius as f64 - distance_from_bottom as f64 - 0.5)
+                } else {
+                    None
+                };
+                if let Some(dy) = corner_distance {
+                    let inside = ((radius * radius) as f64 - dy * dy).max(0.0).sqrt();
+                    inset = (radius as f64 - inside).ceil() as i64;
+                }
+            }
+            let left = (left_bound + inset).max(0);
+            let right = (right_bound - inset).min(self.width as i64);
+            if left < right {
+                self.try_fill_rect(palette, left as i32, row as i32,
+                    (right - left) as u32, 1, color)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Convenience rounded-rectangle fill. Use try_fill_rounded_rect when allocation errors matter.
+    pub fn fill_rounded_rect(
+        &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
+        radius: u32, color: Color,
+    ) {
+        let _ = self.try_fill_rounded_rect(palette, x, y, width, height, radius, color);
+    }
+
     /// Draws a rectangle outline and reports tile-allocation failures.
     pub fn try_stroke_rect(
         &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
