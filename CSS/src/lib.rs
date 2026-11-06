@@ -1405,6 +1405,102 @@ impl Default for ViewportRenderer {
     fn default() -> Self { Self::new() }
 }
 
+/// Sparse tiled drawing surface. Only tiles that receive drawing operations
+/// allocate pixel memory; untouched portions of a large logical surface cost
+/// only the small tile-map entry overhead.
+pub struct TiledSurface {
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    tiles: std::collections::HashMap<(u32, u32), Framebuffer>,
+}
+
+impl TiledSurface {
+    pub const DEFAULT_TILE_SIZE: u32 = 128;
+
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        Self::with_tile_size(width, height, Self::DEFAULT_TILE_SIZE)
+    }
+
+    pub fn with_tile_size(width: u32, height: u32, tile_size: u32) -> Result<Self, String> {
+        if width == 0 || height == 0 || tile_size == 0 {
+            return Err("surface dimensions and tile size must be greater than zero".into());
+        }
+        Ok(Self { width, height, tile_size, tiles: std::collections::HashMap::new() })
+    }
+
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
+    pub fn tile_size(&self) -> u32 { self.tile_size }
+    pub fn allocated_tiles(&self) -> usize { self.tiles.len() }
+    pub fn allocated_bytes(&self) -> usize {
+        self.tiles.values().map(|tile| tile.pixels.len()).sum()
+    }
+
+    fn tile_dimensions(&self, tile_x: u32, tile_y: u32) -> (u32, u32) {
+        let x = tile_x * self.tile_size;
+        let y = tile_y * self.tile_size;
+        ((self.width - x).min(self.tile_size), (self.height - y).min(self.tile_size))
+    }
+
+    fn tile_mut(&mut self, tile_x: u32, tile_y: u32) -> Result<&mut Framebuffer, String> {
+        if !self.tiles.contains_key(&(tile_x, tile_y)) {
+            let (width, height) = self.tile_dimensions(tile_x, tile_y);
+            self.tiles.insert((tile_x, tile_y), Framebuffer::new(width, height)?);
+        }
+        Ok(self.tiles.get_mut(&(tile_x, tile_y)).expect("tile inserted"))
+    }
+
+    pub fn set_pixel(&mut self, palette: &Palette, x: i32, y: i32, color: Color) {
+        if x < 0 || y < 0 || x as u32 >= self.width || y as u32 >= self.height { return; }
+        let (x, y) = (x as u32, y as u32);
+        let tx = x / self.tile_size;
+        let ty = y / self.tile_size;
+        if let Ok(tile) = self.tile_mut(tx, ty) {
+            tile.set_pixel(palette, (x % self.tile_size) as i32, (y % self.tile_size) as i32, color);
+        }
+    }
+
+    /// Reads an RGBA pixel. Unallocated tiles are transparent.
+    pub fn pixel_rgba(&self, x: u32, y: u32) -> Option<[u8; 4]> {
+        if x >= self.width || y >= self.height { return None; }
+        let tile = self.tiles.get(&(x / self.tile_size, y / self.tile_size))?;
+        let offset = tile.offset(x % self.tile_size, y % self.tile_size);
+        Some([tile.pixels[offset], tile.pixels[offset + 1], tile.pixels[offset + 2], tile.pixels[offset + 3]])
+    }
+
+    pub fn fill_rect(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        color: Color,
+    ) {
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
+        if left >= right || top >= bottom { return; }
+        for ty in (top / self.tile_size)..=((bottom - 1) / self.tile_size) {
+            for tx in (left / self.tile_size)..=((right - 1) / self.tile_size) {
+                let tile_left = tx * self.tile_size;
+                let tile_top = ty * self.tile_size;
+                let l = left.max(tile_left) - tile_left;
+                let t = top.max(tile_top) - tile_top;
+                let r = right.min(tile_left + self.tile_size) - tile_left;
+                let b = bottom.min(tile_top + self.tile_size) - tile_top;
+                if let Ok(tile) = self.tile_mut(tx, ty) {
+                    tile.fill_rect(palette, l as i32, t as i32, r-l, b-t, color);
+                }
+            }
+        }
+    }
+
+    pub fn clear_tiles(&mut self) { self.tiles.clear(); }
+}
+
 /// Reuses off-screen framebuffers to reduce repeated allocation churn.
 ///
 /// The pool retains only released surfaces and never exceeds its byte budget.
@@ -1812,8 +1908,46 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
 }
 
-#[cfg(test)]
-#[test]
+
+mod tests {
+    use super::*;
+    fn test_palette(colors: &[Color]) -> Palette {
+        let mut pixels = vec![0u8; COLOR_COUNT * 3];
+        for color in colors {
+            let offset = unpermute(color.packed()) as usize * 3;
+            pixels[offset..offset + 3].copy_from_slice(&[color.r, color.g, color.b]);
+        }
+        Palette { pixels }
+    }
+
+    #[test]
+    fn tiled_surface_allocates_only_touched_tiles() {
+        let color = Color::rgb(12, 34, 56);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(1000, 700, 100).unwrap();
+        assert_eq!(surface.allocated_tiles(), 0);
+        surface.set_pixel(&palette, 250, 150, color);
+        assert_eq!(surface.allocated_tiles(), 1);
+        assert_eq!(surface.allocated_bytes(), 100 * 100 * 4);
+        assert_eq!(surface.pixel_rgba(250, 150), Some([12, 34, 56, 255]));
+        assert_eq!(surface.pixel_rgba(0, 0), None);
+        surface.clear_tiles();
+        assert_eq!(surface.allocated_tiles(), 0);
+    }
+
+    #[test]
+    fn tiled_surface_fills_across_tile_boundaries() {
+        let color = Color::rgb(1, 2, 3);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(300, 200, 64).unwrap();
+        surface.fill_rect(&palette, 60, 60, 10, 10, color);
+        assert_eq!(surface.pixel_rgba(60, 60), Some([1, 2, 3, 255]));
+        assert_eq!(surface.pixel_rgba(69, 69), Some([1, 2, 3, 255]));
+        assert_eq!(surface.pixel_rgba(59, 60), None);
+        assert_eq!(surface.allocated_tiles(), 4);
+    }
+
+    #[test]
     fn framebuffer_pool_reuses_and_resets_surfaces() {
         let mut pool = FramebufferPool::new(1024);
         let mut frame = pool.acquire(4, 3).unwrap();
@@ -1824,7 +1958,6 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
         pool.release(frame);
         assert_eq!(pool.len(), 1);
         assert_eq!(pool.bytes_used(), 48);
-
         let reused = pool.acquire(4, 3).unwrap();
         assert_eq!(pool.len(), 0);
         assert_eq!(pool.bytes_used(), 0);
@@ -1840,7 +1973,6 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
         pool.release(Framebuffer::new(4, 3).unwrap());
         assert!(pool.is_empty());
         assert_eq!(pool.bytes_used(), 0);
-
         pool.set_byte_budget(128);
         pool.release(Framebuffer::new(4, 3).unwrap());
         assert_eq!(pool.bytes_used(), 48);
@@ -1849,9 +1981,6 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
         assert_eq!(pool.bytes_used(), 0);
     }
 
-    
-mod tests {
-    use super::*;
 
     #[test]
     fn viewport_renderer_updates_only_source_dirty_regions_after_initial_draw() {
