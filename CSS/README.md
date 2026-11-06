@@ -31,6 +31,7 @@ frame.clear(&palette, Color::WHITE);
 - Dirty-region tracking for pixel writes, alpha blends, all filled shape rasterizers, layer compositing, and full-frame clears; `take_dirty_regions()` returns and resets the pending rectangles
 - Incremental framebuffer synchronization with `copy_dirty_from()`, which copies only changed rectangles, respects the destination clip, and leaves source dirty state intact for multiple consumers
 - Independent off-screen layers with visibility toggles and opacity
+- Ordered `LayerStack` scene composition with incremental dirty-region recomposition: when a layer changes, only affected target rectangles are cleared and all layers are replayed inside those rectangles, preserving correct overlap; visibility and opacity changes trigger a full rebuild
 - Bounded render cache for reusable framebuffer snapshots, with explicit invalidation and oldest-first memory-budget eviction
 - Incremental layer compositing with `composite_dirty_into()`, which scans only pending source dirty regions and preserves them for multiple targets; perform a full scene recomposition after changing layer visibility or opacity
 - Source-over alpha compositing of transparent layers into a target framebuffer
@@ -62,5 +63,7 @@ cargo run --manifest-path CSS/Cargo.toml -- demo CSS/all-rgb-colors.png output.p
 This is a first rendering core, not a complete browser renderer. SVG parsing and SVG path-data tokenization are not implemented yet; vector paths must currently be constructed through the Rust API. Full CSS gradient syntax and color-stop handling, anti-aliasing for all shape types, text integration, video/image surfaces, OS window presentation, and GPU acceleration are also pending. Affine transforms currently apply to vector paths, not to every primitive.
 
 The PNG palette is a source of exact RGB values, not a way to represent alpha. Alpha is handled separately by the framebuffer. For speed, palette inversion is cached and drawing operations sample a color once where practical.
+
+`LayerStack` owns its layer surfaces and consumes their pending dirty regions after composing them. Draw through `LayerStack::framebuffer_mut()` so changes are tracked; use its visibility/opacity setters so configuration changes trigger a safe full-scene rebuild.
 
 Dirty regions are clipped to the framebuffer and active clip, and overlapping or adjacent regions are merged. The list is capped at 64 regions; if it grows beyond that, it is conservatively collapsed into one bounding rectangle to keep tracking memory bounded. Full-frame clear operations deliberately mark the entire framebuffer dirty, regardless of the active drawing clip, because they clear every pixel.
