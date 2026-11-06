@@ -479,6 +479,107 @@ impl Framebuffer {
         }
     }
 
+    /// Draws a quadratic Bézier curve by flattening it into line segments.
+    pub fn draw_quadratic_bezier(
+        &mut self,
+        palette: &Palette,
+        start: (f32, f32),
+        control: (f32, f32),
+        end: (f32, f32),
+        color: Color,
+        segments: u32,
+    ) {
+        let steps = segments.clamp(2, 4096);
+        let mut previous = start;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let one_minus_t = 1.0 - t;
+            let point = (
+                one_minus_t * one_minus_t * start.0
+                    + 2.0 * one_minus_t * t * control.0
+                    + t * t * end.0,
+                one_minus_t * one_minus_t * start.1
+                    + 2.0 * one_minus_t * t * control.1
+                    + t * t * end.1,
+            );
+            self.draw_line(
+                palette,
+                previous.0.round() as i32,
+                previous.1.round() as i32,
+                point.0.round() as i32,
+                point.1.round() as i32,
+                color,
+            );
+            previous = point;
+        }
+    }
+
+    /// Draws a cubic Bézier curve by flattening it into line segments.
+    pub fn draw_cubic_bezier(
+        &mut self,
+        palette: &Palette,
+        start: (f32, f32),
+        control1: (f32, f32),
+        control2: (f32, f32),
+        end: (f32, f32),
+        color: Color,
+        segments: u32,
+    ) {
+        let steps = segments.clamp(2, 4096);
+        let mut previous = start;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let u = 1.0 - t;
+            let point = (
+                u * u * u * start.0
+                    + 3.0 * u * u * t * control1.0
+                    + 3.0 * u * t * t * control2.0
+                    + t * t * t * end.0,
+                u * u * u * start.1
+                    + 3.0 * u * u * t * control1.1
+                    + 3.0 * u * t * t * control2.1
+                    + t * t * t * end.1,
+            );
+            self.draw_line(
+                palette,
+                previous.0.round() as i32,
+                previous.1.round() as i32,
+                point.0.round() as i32,
+                point.1.round() as i32,
+                color,
+            );
+            previous = point;
+        }
+    }
+
+    /// Draws an ellipse outline as a connected polyline.
+    pub fn stroke_ellipse(
+        &mut self,
+        palette: &Palette,
+        center_x: i32,
+        center_y: i32,
+        radius_x: u32,
+        radius_y: u32,
+        color: Color,
+        segments: u32,
+    ) {
+        if radius_x == 0 || radius_y == 0 { return; }
+        let steps = segments.clamp(12, 4096);
+        let mut previous = (
+            center_x + radius_x as i32,
+            center_y,
+        );
+        for step in 1..=steps {
+            let angle = std::f64::consts::TAU * step as f64 / steps as f64;
+            let point = (
+                center_x + (radius_x as f64 * angle.cos()).round() as i32,
+                center_y + (radius_y as f64 * angle.sin()).round() as i32,
+            );
+            self.draw_line(palette, previous.0, previous.1, point.0, point.1, color);
+            previous = point;
+        }
+    }
+
     /// Draws the edges of a polygonal path, optionally closing it.
     pub fn draw_polyline(
         &mut self,
