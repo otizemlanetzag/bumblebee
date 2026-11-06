@@ -1564,6 +1564,45 @@ impl TiledSurface {
         }
     }
 
+    /// Fills an ellipse using horizontal spans; only intersected tiles are allocated.
+    pub fn fill_ellipse(
+        &mut self,
+        palette: &Palette,
+        center_x: i32,
+        center_y: i32,
+        radius_x: u32,
+        radius_y: u32,
+        color: Color,
+    ) {
+        if radius_x == 0 || radius_y == 0 {
+            self.set_pixel(palette, center_x, center_y, color);
+            return;
+        }
+        let rx = radius_x as f64;
+        let ry = radius_y as f64;
+        let top = (center_y as i64 - radius_y as i64).max(0);
+        let bottom = (center_y as i64 + radius_y as i64).min(self.height as i64 - 1);
+        if top > bottom { return; }
+
+        for y in top..=bottom {
+            let normalized_y = (y - center_y as i64) as f64 / ry;
+            let remaining = (1.0 - normalized_y * normalized_y).max(0.0);
+            let span = (rx * remaining.sqrt()).floor() as i64;
+            let left = (center_x as i64 - span).max(0);
+            let right = (center_x as i64 + span).min(self.width as i64 - 1);
+            if left <= right {
+                self.fill_rect(
+                    palette,
+                    left as i32,
+                    y as i32,
+                    (right - left + 1) as u32,
+                    1,
+                    color,
+                );
+            }
+        }
+    }
+
     /// Draws the outline of a rectangle without allocating tiles outside its edges.
     pub fn stroke_rect(
         &mut self,
@@ -2062,6 +2101,19 @@ mod tests {
         surface.stroke_rect(&palette, 70, 70, 20, 15, 2, border);
         assert_eq!(surface.pixel_rgba(70, 70), Some([41, 42, 43, 255]));
         assert_eq!(surface.pixel_rgba(75, 75), None);
+    }
+
+    #[test]
+    fn tiled_surface_fills_ellipse_with_clipped_edges() {
+        let color = Color::rgb(51, 52, 53);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(80, 60, 16).unwrap();
+        surface.fill_ellipse(&palette, 2, 20, 10, 6, color);
+        assert_eq!(surface.pixel_rgba(2, 20), Some([51, 52, 53, 255]));
+        assert_eq!(surface.pixel_rgba(12, 20), Some([51, 52, 53, 255]));
+        assert_eq!(surface.pixel_rgba(13, 20), None);
+        assert_eq!(surface.pixel_rgba(2, 14), Some([51, 52, 53, 255]));
+        assert!(surface.allocated_tiles() > 0);
     }
 
     #[test]
