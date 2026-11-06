@@ -1719,6 +1719,75 @@ impl TiledSurface {
         let _ = self.try_stroke_rect(palette, x, y, width, height, thickness, color);
     }
 
+    /// Strokes a vector path directly into sparse tiles.
+    /// Curves are flattened by VectorPath; allocation failures are returned.
+    pub fn try_stroke_path(
+        &mut self, palette: &Palette, path: &VectorPath, color: Color,
+    ) -> Result<(), String> {
+        for contour in path.flatten() {
+            for segment in contour.windows(2) {
+                self.try_draw_line(
+                    palette, segment[0].0, segment[0].1,
+                    segment[1].0, segment[1].1, color,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Fills vector path contours using the even-odd rule directly into sparse tiles.
+    /// Nested contours therefore create holes without allocating a full-size framebuffer.
+    pub fn try_fill_path(
+        &mut self, palette: &Palette, path: &VectorPath, color: Color,
+    ) -> Result<(), String> {
+        let contours = path.flatten();
+        if contours.is_empty() { return Ok(()); }
+        let min_y = contours.iter().flat_map(|p| p.iter().map(|v| v.1))
+            .min().unwrap().max(0);
+        let max_y = contours.iter().flat_map(|p| p.iter().map(|v| v.1))
+            .max().unwrap().min(self.height as i32 - 1);
+        if min_y > max_y { return Ok(()); }
+
+        let mut intersections = Vec::<f64>::new();
+        for y in min_y..=max_y {
+            intersections.clear();
+            let scan_y = y as f64 + 0.5;
+            for contour in &contours {
+                if contour.len() < 2 { continue; }
+                for index in 0..contour.len() {
+                    let (x1, y1) = contour[index];
+                    let (x2, y2) = contour[(index + 1) % contour.len()];
+                    if y1 == y2 { continue; }
+                    let low = y1.min(y2) as f64;
+                    let high = y1.max(y2) as f64;
+                    if scan_y < low || scan_y >= high { continue; }
+                    let t = (scan_y - y1 as f64) / (y2 - y1) as f64;
+                    intersections.push(x1 as f64 + t * (x2 - x1) as f64);
+                }
+            }
+            intersections.sort_by(|a, b| a.total_cmp(b));
+            for pair in intersections.chunks_exact(2) {
+                let left = (pair[0].ceil() as i64).max(0).min(self.width as i64);
+                let right = (pair[1].ceil() as i64).max(0).min(self.width as i64);
+                if left < right {
+                    self.try_fill_rect(palette, left as i32, y,
+                        (right - left) as u32, 1, color)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Convenience path stroke. Use try_stroke_path when allocation errors matter.
+    pub fn stroke_path(&mut self, palette: &Palette, path: &VectorPath, color: Color) {
+        let _ = self.try_stroke_path(palette, path, color);
+    }
+
+    /// Convenience path fill. Use try_fill_path when allocation errors matter.
+    pub fn fill_path(&mut self, palette: &Palette, path: &VectorPath, color: Color) {
+        let _ = self.try_fill_path(palette, path, color);
+    }
+
     /// Composites allocated tiles over a framebuffer using source-over alpha.
     /// Transparent pixels and unallocated tiles are skipped; destination clipping applies.
     pub fn composite_into(
