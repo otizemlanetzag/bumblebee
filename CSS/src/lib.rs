@@ -1437,6 +1437,43 @@ impl TiledSurface {
         self.tiles.values().map(|tile| tile.pixels.len()).sum()
     }
 
+    /// Returns pending dirty rectangles in surface-wide coordinates.
+    /// Rectangles remain tile-local only internally; callers receive global positions.
+    pub fn dirty_regions(&self) -> Vec<DirtyRegion> {
+        let mut regions = Vec::new();
+        for (&(tile_x, tile_y), tile) in &self.tiles {
+            let origin_x = tile_x * self.tile_size;
+            let origin_y = tile_y * self.tile_size;
+            for region in tile.dirty_regions() {
+                regions.push(DirtyRegion {
+                    x: origin_x + region.x,
+                    y: origin_y + region.y,
+                    width: region.width,
+                    height: region.height,
+                });
+            }
+        }
+        regions
+    }
+
+    /// Returns and clears pending dirty rectangles in surface-wide coordinates.
+    pub fn take_dirty_regions(&mut self) -> Vec<DirtyRegion> {
+        let mut regions = Vec::new();
+        for (&(tile_x, tile_y), tile) in self.tiles.iter_mut() {
+            let origin_x = tile_x * self.tile_size;
+            let origin_y = tile_y * self.tile_size;
+            for region in tile.take_dirty_regions() {
+                regions.push(DirtyRegion {
+                    x: origin_x + region.x,
+                    y: origin_y + region.y,
+                    width: region.width,
+                    height: region.height,
+                });
+            }
+        }
+        regions
+    }
+
     fn tile_dimensions(&self, tile_x: u32, tile_y: u32) -> (u32, u32) {
         let x = tile_x * self.tile_size;
         let y = tile_y * self.tile_size;
