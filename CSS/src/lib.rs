@@ -441,6 +441,12 @@ impl Framebuffer {
         }
     }
 
+    /// Clears the framebuffer to fully transparent pixels.
+    /// Unlike clear(), this is useful for off-screen compositing layers.
+    pub fn clear_transparent(&mut self) {
+        self.pixels.fill(0);
+    }
+
     pub fn set_pixel(&mut self, palette: &Palette, x: i32, y: i32, color: Color) {
         if !self.in_bounds(x, y) { return; }
         let c = palette.sample(color);
