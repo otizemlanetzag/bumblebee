@@ -384,7 +384,7 @@ impl Framebuffer {
         }
     }
 
-    /// Draws a rounded rectangle border by filling its outer and inner shapes.
+    /// Draws only the border of a rounded rectangle, preserving pixels inside it.
     pub fn stroke_rounded_rect(
         &mut self,
         palette: &Palette,
@@ -397,18 +397,45 @@ impl Framebuffer {
         color: Color,
     ) {
         if width == 0 || height == 0 || thickness == 0 { return; }
-        self.fill_rounded_rect(palette, x, y, width, height, radius, color);
-        let inset = thickness.min(width / 2).min(height / 2);
-        if width > inset * 2 && height > inset * 2 {
-            self.fill_rounded_rect(
-                palette,
-                x.saturating_add(inset as i32),
-                y.saturating_add(inset as i32),
-                width - inset * 2,
-                height - inset * 2,
-                radius.saturating_sub(inset),
-                Color::BLACK,
-            );
+        let radius = radius.min(width / 2).min(height / 2) as f64;
+        let thickness = thickness.min(width / 2).min(height / 2) as f64;
+        let outer_left = x as f64 + radius;
+        let outer_right = x as f64 + width as f64 - radius;
+        let outer_top = y as f64 + radius;
+        let outer_bottom = y as f64 + height as f64 - radius;
+        let inner_radius = (radius - thickness).max(0.0);
+        let inner_left = x as f64 + thickness + inner_radius;
+        let inner_right = x as f64 + width as f64 - thickness - inner_radius;
+        let inner_top = y as f64 + thickness + inner_radius;
+        let inner_bottom = y as f64 + height as f64 - thickness - inner_radius;
+        let c = palette.sample(color);
+        let left = (x as i64).max(0);
+        let top = (y as i64).max(0);
+        let right = (x as i64 + width as i64).min(self.width as i64);
+        let bottom = (y as i64 + height as i64).min(self.height as i64);
+        if left >= right || top >= bottom { return; }
+
+        for py in top..bottom {
+            for px in left..right {
+                let cx = px as f64 + 0.5;
+                let cy = py as f64 + 0.5;
+                let ox = (cx - outer_left).clamp(0.0, (outer_right - outer_left).max(0.0));
+                let oy = (cy - outer_top).clamp(0.0, (outer_bottom - outer_top).max(0.0));
+                let odx = cx - (outer_left + ox);
+                let ody = cy - (outer_top + oy);
+                let in_outer = odx * odx + ody * ody <= radius * radius || radius == 0.0;
+                if !in_outer { continue; }
+
+                let ix = (cx - inner_left).clamp(0.0, (inner_right - inner_left).max(0.0));
+                let iy = (cy - inner_top).clamp(0.0, (inner_bottom - inner_top).max(0.0));
+                let idx = cx - (inner_left + ix);
+                let idy = cy - (inner_top + iy);
+                let in_inner = inner_radius > 0.0 && idx * idx + idy * idy < inner_radius * inner_radius;
+                if !in_inner {
+                    let offset = self.offset(px as u32, py as u32);
+                    self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                }
+            }
         }
     }
 
