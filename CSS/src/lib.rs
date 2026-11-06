@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn render_cache_evicts_oldest_entry_to_respect_budget() {
-        let mut cache = RenderCache::new(32);
+        let mut cache = RenderCache::new(16);
         let first = Framebuffer::new(2, 2).unwrap();
         let second = Framebuffer::new(2, 2).unwrap();
         cache.insert(1, &first);
