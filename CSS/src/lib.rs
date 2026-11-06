@@ -11,6 +11,7 @@ pub const PALETTE_SIDE: u32 = 4096;
 pub const COLOR_COUNT: usize = 1 << 24;
 const COLOR_MASK: u32 = (1 << 24) - 1;
 const PERMUTATION_MULTIPLIER: u32 = 0x00BD_1E9B;
+const MAX_DIRTY_REGIONS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Color {
@@ -494,6 +495,18 @@ impl Framebuffer {
             index = 0;
         }
         self.dirty_regions.push(merged);
+        if self.dirty_regions.len() > MAX_DIRTY_REGIONS {
+            let mut bounds = self.dirty_regions[0];
+            for region in self.dirty_regions.iter().skip(1) {
+                let right = (bounds.x + bounds.width).max(region.x + region.width);
+                let bottom = (bounds.y + bounds.height).max(region.y + region.height);
+                let left = bounds.x.min(region.x);
+                let top = bounds.y.min(region.y);
+                bounds = DirtyRegion { x: left, y: top, width: right - left, height: bottom - top };
+            }
+            self.dirty_regions.clear();
+            self.dirty_regions.push(bounds);
+        }
     }
 
     pub fn clear(&mut self, palette: &Palette, color: Color) {
@@ -1256,6 +1269,16 @@ mod tests {
         let taken = frame.take_dirty_regions();
         assert_eq!(taken.len(), 1);
         assert!(!frame.has_dirty_regions());
+    }
+
+    #[test]
+    fn dirty_region_count_is_bounded() {
+        let mut frame = Framebuffer::new(256, 4).unwrap();
+        for x in (0..256).step_by(2) {
+            frame.mark_dirty_region(x, 0, 1, 1);
+        }
+        assert_eq!(frame.dirty_regions().len(), 1);
+        assert_eq!(frame.dirty_regions()[0], DirtyRegion { x: 0, y: 0, width: 255, height: 1 });
     }
 
     #[test]
