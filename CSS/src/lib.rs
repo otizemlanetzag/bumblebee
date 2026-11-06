@@ -172,7 +172,7 @@ impl Palette {
 }
 
 /// Commands for a compact vector path. Coordinates are in framebuffer pixels.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PathCommand {
     MoveTo(f32, f32),
     LineTo(f32, f32),
