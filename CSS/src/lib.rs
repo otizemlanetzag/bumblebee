@@ -2311,6 +2311,38 @@ mod tests {
     }
 
     #[test]
+    fn tiled_surface_fills_vector_path_without_full_framebuffer() {
+        let color = Color::rgb(120, 30, 210);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(20, 20, 4).unwrap();
+        let mut path = VectorPath::new();
+        path.move_to(2.0, 2.0)
+            .line_to(17.0, 2.0)
+            .line_to(17.0, 17.0)
+            .line_to(2.0, 17.0)
+            .close();
+        surface.try_fill_path(&palette, &path, color).unwrap();
+        assert_eq!(surface.pixel_rgba(5, 5), Some([120, 30, 210, 255]));
+        assert_eq!(surface.pixel_rgba(0, 0), None);
+        assert!(surface.allocated_tiles() > 0);
+        assert!(surface.allocated_tiles() < 25);
+    }
+
+    #[test]
+    fn tiled_surface_strokes_flattened_bezier_path() {
+        let color = Color::rgb(11, 222, 99);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(32, 24, 8).unwrap();
+        let mut path = VectorPath::new();
+        path.move_to(2.0, 18.0)
+            .cubic_to((8.0, 0.0), (22.0, 0.0), (29.0, 18.0), 16);
+        surface.try_stroke_path(&palette, &path, color).unwrap();
+        assert_eq!(surface.pixel_rgba(2, 18), Some([11, 222, 99, 255]));
+        assert_eq!(surface.pixel_rgba(29, 18), Some([11, 222, 99, 255]));
+        assert!(surface.allocated_tiles() > 0);
+    }
+
+    #[test]
     fn tiled_surface_alpha_blends_over_transparent_pixels() {
         let palette = test_palette(&[Color::rgb(200, 40, 20)]);
         let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
