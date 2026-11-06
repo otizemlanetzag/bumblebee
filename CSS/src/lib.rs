@@ -1247,6 +1247,101 @@ impl Viewport {
     }
 }
 
+/// Tracks the last viewport presentation so unchanged views can update
+/// only the destination rectangles affected by source dirty regions.
+pub struct ViewportRenderer {
+    previous_viewport: Option<Viewport>,
+    previous_origin: Option<(i32, i32)>,
+    previous_source_size: Option<(u32, u32)>,
+    previous_target_size: Option<(u32, u32)>,
+}
+
+impl ViewportRenderer {
+    pub fn new() -> Self {
+        Self {
+            previous_viewport: None,
+            previous_origin: None,
+            previous_source_size: None,
+            previous_target_size: None,
+        }
+    }
+
+    /// Presents the viewport. Returns the number of rendered rectangles.
+    /// A changed view or surface size triggers a full viewport redraw;
+    /// otherwise only source dirty regions are mapped to destination pixels.
+    /// Source dirty regions are preserved for other consumers.
+    pub fn render_dirty_into(
+        &mut self,
+        viewport: &Viewport,
+        source: &Framebuffer,
+        target: &mut Framebuffer,
+        destination_x: i32,
+        destination_y: i32,
+    ) -> Result<usize, String> {
+        let source_size = (source.width, source.height);
+        let target_size = (target.width, target.height);
+        let view_changed = self.previous_viewport != Some(*viewport)
+            || self.previous_origin != Some((destination_x, destination_y))
+            || self.previous_source_size != Some(source_size)
+            || self.previous_target_size != Some(target_size);
+
+        let count = if view_changed {
+            viewport.render_into(source, target, destination_x, destination_y)?;
+            1
+        } else {
+            let mut regions = Framebuffer::new(viewport.width, viewport.height)?;
+            for dirty in source.dirty_regions() {
+                let local_left = ((dirty.x as f32 - viewport.scroll_x) * viewport.scale).ceil();
+                let local_top = ((dirty.y as f32 - viewport.scroll_y) * viewport.scale).ceil();
+                let local_right = (((dirty.x + dirty.width) as f32 - viewport.scroll_x) * viewport.scale).ceil();
+                let local_bottom = (((dirty.y + dirty.height) as f32 - viewport.scroll_y) * viewport.scale).ceil();
+                if !local_left.is_finite() || !local_top.is_finite()
+                    || !local_right.is_finite() || !local_bottom.is_finite()
+                {
+                    continue;
+                }
+                let left = (local_left as i64).clamp(0, viewport.width as i64);
+                let top = (local_top as i64).clamp(0, viewport.height as i64);
+                let right = (local_right as i64).clamp(0, viewport.width as i64);
+                let bottom = (local_bottom as i64).clamp(0, viewport.height as i64);
+                if left < right && top < bottom {
+                    regions.mark_dirty_region(left as i32, top as i32, (right-left) as u32, (bottom-top) as u32);
+                }
+            }
+
+            let changed = regions.take_dirty_regions();
+            for region in &changed {
+                target.save_clip();
+                target.intersect_clip(
+                    destination_x.saturating_add(region.x as i32),
+                    destination_y.saturating_add(region.y as i32),
+                    region.width,
+                    region.height,
+                );
+                let result = viewport.render_into(source, target, destination_x, destination_y);
+                target.restore_clip();
+                result?;
+            }
+            changed.len()
+        };
+
+        self.previous_viewport = Some(*viewport);
+        self.previous_origin = Some((destination_x, destination_y));
+        self.previous_source_size = Some(source_size);
+        self.previous_target_size = Some(target_size);
+        Ok(count)
+    }
+
+    /// Forces the next presentation to redraw the entire viewport.
+    pub fn invalidate(&mut self) {
+        self.previous_viewport = None;
+    }
+}
+
+impl Default for ViewportRenderer {
+    fn default() -> Self { Self::new() }
+}
+
 /// A bounded cache of completed framebuffer renders.
 ///
 /// The caller supplies a stable key derived from the element's content and
