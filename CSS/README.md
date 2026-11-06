@@ -37,7 +37,7 @@ frame.clear(&palette, Color::WHITE);
 - Quadratic and cubic Bézier curves
 - Reusable vector paths with move, line, curve, and close commands
 - Affine path transforms: translation, scaling, rotation, and matrix composition
-- Framebuffer clipping rectangles, including nested intersection and reset
+- Framebuffer clipping rectangles, including nested intersection, save/restore stack, and reset; filled ellipses, rounded rectangles, polygons, and vector-path fills respect the active clip
 - Anti-aliased line drawing with coverage blending
 - Even-odd filling across multiple path contours (including holes)
 - Horizontal two-color linear gradients
