@@ -36,6 +36,9 @@ frame.clear(&palette, Color::WHITE);
 - Open and closed polylines
 - Quadratic and cubic Bézier curves
 - Reusable vector paths with move, line, curve, and close commands
+- Affine path transforms: translation, scaling, rotation, and matrix composition
+- Framebuffer clipping rectangles, including nested intersection and reset
+- Anti-aliased line drawing with coverage blending
 - Even-odd filling across multiple path contours (including holes)
 - Horizontal two-color linear gradients
 - Elliptical radial gradients
@@ -49,6 +52,6 @@ cargo run --manifest-path CSS/Cargo.toml -- demo CSS/all-rgb-colors.png output.p
 
 ## Important limitations
 
-This is a first rendering core, not a complete browser renderer. SVG parsing and SVG path-data tokenization are not implemented yet; vector paths must currently be constructed through the Rust API. Full CSS gradient syntax and color-stop handling, transforms, clipping stacks, compositing layers, text integration, video/image surfaces, OS window presentation, and GPU acceleration are also pending.
+This is a first rendering core, not a complete browser renderer. SVG parsing and SVG path-data tokenization are not implemented yet; vector paths must currently be constructed through the Rust API. Full CSS gradient syntax and color-stop handling, a general save/restore clipping stack, anti-aliasing for all shape types, compositing layers, text integration, video/image surfaces, OS window presentation, and GPU acceleration are also pending. Affine transforms currently apply to vector paths, not to every primitive.
 
 The PNG palette is a source of exact RGB values, not a way to represent alpha. Alpha is handled separately by the framebuffer. For speed, palette inversion is cached and drawing operations sample a color once where practical.
