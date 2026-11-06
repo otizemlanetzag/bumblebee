@@ -1909,6 +1909,7 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 }
 
 
+#[cfg(test)]
 mod tests {
     use super::*;
     fn test_palette(colors: &[Color]) -> Palette {
