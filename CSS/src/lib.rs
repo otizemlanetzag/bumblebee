@@ -1368,6 +1368,26 @@ impl LayerStack {
         Ok(self.layers.len() - 1)
     }
 
+    /// Removes a layer and returns it. The composed scene must be rebuilt.
+    pub fn remove_layer(&mut self, index: usize) -> Option<Layer> {
+        if index >= self.layers.len() { return None; }
+        self.full_rebuild = true;
+        Some(self.layers.remove(index))
+    }
+
+    /// Changes z-order: `to` is the layer's new index (0 is the back).
+    pub fn move_layer(&mut self, from: usize, to: usize) -> Result<(), String> {
+        if from >= self.layers.len() || to >= self.layers.len() {
+            return Err("layer index out of range".into());
+        }
+        if from != to {
+            let layer = self.layers.remove(from);
+            self.layers.insert(to, layer);
+            self.full_rebuild = true;
+        }
+        Ok(())
+    }
+
     pub fn framebuffer(&self, index: usize) -> Option<&Framebuffer> {
         self.layers.get(index).map(Layer::framebuffer)
     }
@@ -1643,6 +1663,26 @@ mod tests {
         assert_eq!(&target.pixels[4..8], &[0, 255, 0, 255]);
         assert_eq!(&target.pixels[0..4], &[0, 0, 255, 255]);
         assert_eq!(stack.composite_dirty_into(&mut target).unwrap(), 0);
+    }
+
+    #[test]
+    fn layer_stack_can_remove_and_reorder_layers() {
+        let mut stack = LayerStack::new(1, 1).unwrap();
+        let back = stack.add_layer().unwrap();
+        let front = stack.add_layer().unwrap();
+        stack.framebuffer_mut(back).unwrap().pixels.copy_from_slice(&[255, 0, 0, 255]);
+        stack.framebuffer_mut(front).unwrap().pixels.copy_from_slice(&[0, 0, 255, 255]);
+        let mut target = Framebuffer::new(1, 1).unwrap();
+        stack.composite_into(&mut target).unwrap();
+        assert_eq!(&target.pixels, &[0, 0, 255, 255]);
+
+        stack.move_layer(front, back).unwrap();
+        stack.composite_dirty_into(&mut target).unwrap();
+        assert_eq!(&target.pixels, &[255, 0, 0, 255]);
+
+        assert!(stack.remove_layer(back).is_some());
+        stack.composite_dirty_into(&mut target).unwrap();
+        assert_eq!(&target.pixels, &[0, 0, 255, 255]);
     }
 
     #[test]
