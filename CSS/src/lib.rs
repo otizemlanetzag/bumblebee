@@ -364,6 +364,14 @@ impl VectorPath {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirtyRegion {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Clone)]
 pub struct Framebuffer {
     width: u32,
@@ -374,6 +382,8 @@ pub struct Framebuffer {
     clip_stack: Vec<Option<(u32, u32, u32, u32)>>,
     /// RGBA output pixels, row-major.
     pixels: Vec<u8>,
+    /// Rectangles changed since the last call to `take_dirty_regions`.
+    dirty_regions: Vec<DirtyRegion>,
 }
 
 impl Framebuffer {
@@ -391,6 +401,7 @@ impl Framebuffer {
             clip: None,
             clip_stack: Vec::new(),
             pixels: vec![0; byte_len],
+            dirty_regions: Vec::new(),
         })
     }
 
@@ -435,7 +446,59 @@ impl Framebuffer {
     pub fn width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
 
+    /// Returns the pending changed rectangles without clearing them.
+    pub fn dirty_regions(&self) -> &[DirtyRegion] { &self.dirty_regions }
+
+    pub fn has_dirty_regions(&self) -> bool { !self.dirty_regions.is_empty() }
+
+    /// Takes the changed rectangles accumulated since the previous take.
+    pub fn take_dirty_regions(&mut self) -> Vec<DirtyRegion> {
+        std::mem::take(&mut self.dirty_regions)
+    }
+
+    /// Marks a rectangle as changed. It is clipped to the framebuffer and the
+    /// active drawing clip, then merged with any overlapping/touching region.
+    pub fn mark_dirty_region(&mut self, x: i32, y: i32, width: u32, height: u32) {
+        if width == 0 || height == 0 { return; }
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).max(0).min(self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).max(0).min(self.height as i64) as u32;
+        if left >= right || top >= bottom { return; }
+        let (left, top, right, bottom) = match self.clip {
+            Some((cl, ct, cr, cb)) => (left.max(cl), top.max(ct), right.min(cr), bottom.min(cb)),
+            None => (left, top, right, bottom),
+        };
+        if left >= right || top >= bottom { return; }
+
+        let mut merged = DirtyRegion { x: left, y: top, width: right-left, height: bottom-top };
+        let mut index = 0;
+        while index < self.dirty_regions.len() {
+            let old = self.dirty_regions[index];
+            let old_right = old.x + old.width;
+            let old_bottom = old.y + old.height;
+            let new_right = merged.x + merged.width;
+            let new_bottom = merged.y + merged.height;
+            let separated = old_right < merged.x || new_right < old.x
+                || old_bottom < merged.y || new_bottom < old.y;
+            if separated {
+                index += 1;
+                continue;
+            }
+            let nx = old.x.min(merged.x);
+            let ny = old.y.min(merged.y);
+            let nr = old_right.max(new_right);
+            let nb = old_bottom.max(new_bottom);
+            merged = DirtyRegion { x: nx, y: ny, width: nr-nx, height: nb-ny };
+            self.dirty_regions.swap_remove(index);
+            index = 0;
+        }
+        self.dirty_regions.push(merged);
+    }
+
     pub fn clear(&mut self, palette: &Palette, color: Color) {
+        self.dirty_regions.clear();
+        self.mark_dirty_region(0, 0, self.width, self.height);
         let c = palette.sample(color);
         for pixel in self.pixels.chunks_exact_mut(4) {
             pixel.copy_from_slice(&[c.r, c.g, c.b, 255]);
@@ -445,6 +508,8 @@ impl Framebuffer {
     /// Clears the framebuffer to fully transparent pixels.
     /// Unlike clear(), this is useful for off-screen compositing layers.
     pub fn clear_transparent(&mut self) {
+        self.dirty_regions.clear();
+        self.mark_dirty_region(0, 0, self.width, self.height);
         self.pixels.fill(0);
     }
 
@@ -453,6 +518,7 @@ impl Framebuffer {
         let c = palette.sample(color);
         let offset = self.offset(x as u32, y as u32);
         self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+        self.mark_dirty_region(x, y, 1, 1);
     }
 
     /// Alpha-composites a palette color over the existing framebuffer pixel.
@@ -471,6 +537,7 @@ impl Framebuffer {
             self.pixels[offset + channel] = ((src as u32 * a + dst * inverse + 127) / 255) as u8;
         }
         self.pixels[offset + 3] = 255;
+        self.mark_dirty_region(x, y, 1, 1);
     }
 
     pub fn fill_rect(&mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32, color: Color) {
@@ -479,6 +546,7 @@ impl Framebuffer {
         let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
         let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
         if right <= left || bottom <= top { return; }
+        self.mark_dirty_region(left as i32, top as i32, right-left, bottom-top);
         let c = palette.sample(color);
         for py in top..bottom {
             for px in left..right {
