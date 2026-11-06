@@ -1006,6 +1006,74 @@ impl Framebuffer {
     }
 }
 
+
+/// A transparent off-screen drawing surface with independent visibility and opacity.
+///
+/// Layers are composited in insertion order by the caller. Their pixels are kept
+/// separate until `composite_into` is called, so changing visibility or opacity
+/// does not require redrawing the layer's contents.
+pub struct Layer {
+    framebuffer: Framebuffer,
+    opacity: u8,
+    visible: bool,
+}
+
+impl Layer {
+    /// Creates a transparent layer with the requested dimensions.
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        Ok(Self {
+            framebuffer: Framebuffer::new(width, height)?,
+            opacity: 255,
+            visible: true,
+        })
+    }
+
+    pub fn framebuffer(&self) -> &Framebuffer { &self.framebuffer }
+    pub fn framebuffer_mut(&mut self) -> &mut Framebuffer { &mut self.framebuffer }
+
+    pub fn set_opacity(&mut self, opacity: u8) { self.opacity = opacity; }
+    pub fn opacity(&self) -> u8 { self.opacity }
+
+    pub fn set_visible(&mut self, visible: bool) { self.visible = visible; }
+    pub fn is_visible(&self) -> bool { self.visible }
+
+    /// Composites this layer over a target framebuffer using source-over alpha.
+    /// The target's active clipping rectangle is respected.
+    pub fn composite_into(&self, target: &mut Framebuffer) -> Result<(), String> {
+        if self.framebuffer.width != target.width || self.framebuffer.height != target.height {
+            return Err("layer and target framebuffer dimensions must match".into());
+        }
+        if !self.visible || self.opacity == 0 { return Ok(()); }
+
+        let layer_opacity = self.opacity as u32;
+        for y in 0..self.framebuffer.height {
+            for x in 0..self.framebuffer.width {
+                if !target.in_bounds(x as i32, y as i32) { continue; }
+                let source_offset = self.framebuffer.offset(x, y);
+                let source_alpha = self.framebuffer.pixels[source_offset + 3] as u32;
+                let alpha = (source_alpha * layer_opacity + 127) / 255;
+                if alpha == 0 { continue; }
+
+                let target_offset = target.offset(x, y);
+                let dest_alpha = target.pixels[target_offset + 3] as u32;
+                let out_alpha = alpha + (dest_alpha * (255 - alpha) + 127) / 255;
+                if out_alpha == 0 { continue; }
+
+                for channel in 0..3 {
+                    let src = self.framebuffer.pixels[source_offset + channel] as u32;
+                    let dst = target.pixels[target_offset + channel] as u32;
+                    let premultiplied = src * alpha
+                        + (dst * dest_alpha * (255 - alpha) + 127) / 255;
+                    target.pixels[target_offset + channel] =
+                        ((premultiplied + out_alpha / 2) / out_alpha).min(255) as u8;
+                }
+                target.pixels[target_offset + 3] = out_alpha.min(255) as u8;
+            }
+        }
+        Ok(())
+    }
+}
+
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t).round().clamp(0.0, 255.0) as u8
 }
@@ -1013,6 +1081,32 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layer_composites_with_opacity_and_visibility() {
+        let mut layer = Layer::new(2, 1).unwrap();
+        layer.framebuffer_mut().pixels[0..4].copy_from_slice(&[255, 0, 0, 255]);
+        let mut target = Framebuffer::new(2, 1).unwrap();
+        target.pixels[0..4].copy_from_slice(&[0, 0, 255, 255]);
+
+        layer.set_opacity(128);
+        layer.composite_into(&mut target).unwrap();
+        assert!(target.pixels[0] >= 127 && target.pixels[0] <= 129);
+        assert_eq!(target.pixels[2], 127);
+        assert_eq!(target.pixels[3], 255);
+
+        layer.set_visible(false);
+        let before = target.pixels.clone();
+        layer.composite_into(&mut target).unwrap();
+        assert_eq!(target.pixels, before);
+    }
+
+    #[test]
+    fn layer_rejects_different_framebuffer_dimensions() {
+        let layer = Layer::new(2, 2).unwrap();
+        let mut target = Framebuffer::new(3, 2).unwrap();
+        assert!(layer.composite_into(&mut target).is_err());
+    }
 
     #[test]
     fn permutation_round_trips_sample_values() {
