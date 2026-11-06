@@ -364,6 +364,7 @@ impl VectorPath {
     }
 }
 
+#[derive(Clone)]
 pub struct Framebuffer {
     width: u32,
     height: u32,
@@ -1013,6 +1014,88 @@ impl Framebuffer {
 }
 
 
+/// A bounded cache of completed framebuffer renders.
+///
+/// The caller supplies a stable key derived from the element's content and
+/// rendering inputs. A cached frame can then be reused without rasterizing it
+/// again. Inserting an existing key replaces its previous image.
+pub struct RenderCache {
+    entries: std::collections::HashMap<u64, Framebuffer>,
+    insertion_order: std::collections::VecDeque<u64>,
+    bytes_used: usize,
+    byte_budget: usize,
+}
+
+impl RenderCache {
+    /// Creates a cache with a byte budget. The default policy evicts oldest
+    /// inserted entries first; cache keys are owned by the caller.
+    pub fn new(byte_budget: usize) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            insertion_order: std::collections::VecDeque::new(),
+            bytes_used: 0,
+            byte_budget,
+        }
+    }
+
+    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn bytes_used(&self) -> usize { self.bytes_used }
+    pub fn byte_budget(&self) -> usize { self.byte_budget }
+
+    pub fn get(&self, key: u64) -> Option<&Framebuffer> {
+        self.entries.get(&key)
+    }
+
+    /// Stores a snapshot of a completed frame. Oversized frames are not cached.
+    pub fn insert(&mut self, key: u64, frame: &Framebuffer) {
+        self.remove(key);
+        let size = frame.pixels.len();
+        if size > self.byte_budget || self.byte_budget == 0 { return; }
+
+        while self.bytes_used.saturating_add(size) > self.byte_budget {
+            let Some(oldest) = self.insertion_order.pop_front() else { break; };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.bytes_used = self.bytes_used.saturating_sub(removed.pixels.len());
+            }
+        }
+
+        self.entries.insert(key, frame.clone());
+        self.insertion_order.push_back(key);
+        self.bytes_used = self.bytes_used.saturating_add(size);
+    }
+
+    /// Removes one cached frame and returns whether it existed.
+    pub fn invalidate(&mut self, key: u64) -> bool {
+        self.remove(key)
+    }
+
+    /// Clears every cached frame.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.insertion_order.clear();
+        self.bytes_used = 0;
+    }
+
+    /// Changes the memory budget and evicts oldest entries until within budget.
+    pub fn set_byte_budget(&mut self, byte_budget: usize) {
+        self.byte_budget = byte_budget;
+        while self.bytes_used > self.byte_budget {
+            let Some(oldest) = self.insertion_order.pop_front() else { break; };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.bytes_used = self.bytes_used.saturating_sub(removed.pixels.len());
+            }
+        }
+    }
+
+    fn remove(&mut self, key: u64) -> bool {
+        let Some(removed) = self.entries.remove(&key) else { return false; };
+        self.bytes_used = self.bytes_used.saturating_sub(removed.pixels.len());
+        self.insertion_order.retain(|entry| *entry != key);
+        true
+    }
+}
+
 /// A transparent off-screen drawing surface with independent visibility and opacity.
 ///
 /// Layers are composited in insertion order by the caller. Their pixels are kept
@@ -1087,6 +1170,35 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_cache_reuses_and_invalidates_frames() {
+        let mut cache = RenderCache::new(64);
+        let mut frame = Framebuffer::new(2, 2).unwrap();
+        frame.pixels[0..4].copy_from_slice(&[1, 2, 3, 255]);
+        cache.insert(42, &frame);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(42).unwrap().pixels[0..4], [1, 2, 3, 255]);
+        frame.pixels[0] = 99;
+        assert_eq!(cache.get(42).unwrap().pixels[0], 1);
+        assert!(cache.invalidate(42));
+        assert!(cache.get(42).is_none());
+        assert_eq!(cache.bytes_used(), 0);
+    }
+
+    #[test]
+    fn render_cache_evicts_oldest_entry_to_respect_budget() {
+        let mut cache = RenderCache::new(32);
+        let first = Framebuffer::new(2, 2).unwrap();
+        let second = Framebuffer::new(2, 2).unwrap();
+        cache.insert(1, &first);
+        cache.insert(2, &second);
+        assert!(cache.get(1).is_none());
+        assert!(cache.get(2).is_some());
+        assert_eq!(cache.bytes_used(), 16);
+        cache.set_byte_budget(0);
+        assert!(cache.is_empty());
+    }
 
     #[test]
     fn layer_composites_with_opacity_and_visibility() {
