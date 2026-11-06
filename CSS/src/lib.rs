@@ -401,7 +401,7 @@ impl Framebuffer {
         let inset = thickness.min(width / 2).min(height / 2);
         let inner_width = width.saturating_sub(inset * 2);
         let inner_height = height.saturating_sub(inset * 2);
-        let inner_radius = outer_radius.saturating_sub(inset as f64);
+        let inner_radius = (outer_radius - inset as f64).max(0.0);
         let c = palette.sample(color);
         let left = (x as i64).max(0);
         let top = (y as i64).max(0);
