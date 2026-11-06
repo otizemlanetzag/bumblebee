@@ -28,6 +28,9 @@ frame.clear(&palette, Color::WHITE);
 ## Current drawing operations
 
 - Individual pixels and alpha blending
+- Independent off-screen layers with visibility toggles and opacity
+- Source-over alpha compositing of transparent layers into a target framebuffer
+- Transparent framebuffer clearing for layer construction
 - Filled rectangles and rectangle borders
 - Lines
 - Filled circles and ellipses
@@ -52,6 +55,6 @@ cargo run --manifest-path CSS/Cargo.toml -- demo CSS/all-rgb-colors.png output.p
 
 ## Important limitations
 
-This is a first rendering core, not a complete browser renderer. SVG parsing and SVG path-data tokenization are not implemented yet; vector paths must currently be constructed through the Rust API. Full CSS gradient syntax and color-stop handling, a general save/restore clipping stack, anti-aliasing for all shape types, compositing layers, text integration, video/image surfaces, OS window presentation, and GPU acceleration are also pending. Affine transforms currently apply to vector paths, not to every primitive.
+This is a first rendering core, not a complete browser renderer. SVG parsing and SVG path-data tokenization are not implemented yet; vector paths must currently be constructed through the Rust API. Full CSS gradient syntax and color-stop handling, a anti-aliasing for all shape types, text integration, video/image surfaces, OS window presentation, and GPU acceleration are also pending. Affine transforms currently apply to vector paths, not to every primitive.
 
 The PNG palette is a source of exact RGB values, not a way to represent alpha. Alpha is handled separately by the framebuffer. For speed, palette inversion is cached and drawing operations sample a color once where practical.
