@@ -1405,6 +1405,76 @@ impl Default for ViewportRenderer {
     fn default() -> Self { Self::new() }
 }
 
+/// Reuses off-screen framebuffers to reduce repeated allocation churn.
+///
+/// The pool retains only released surfaces and never exceeds its byte budget.
+/// Acquired surfaces are transparent, have no active clip, and start with no
+/// pending dirty regions. The pool is intended for temporary render targets;
+/// it does not reduce the memory required by surfaces that remain in use.
+pub struct FramebufferPool {
+    available: Vec<Framebuffer>,
+    bytes_used: usize,
+    byte_budget: usize,
+}
+
+impl FramebufferPool {
+    pub fn new(byte_budget: usize) -> Self {
+        Self { available: Vec::new(), bytes_used: 0, byte_budget }
+    }
+
+    pub fn len(&self) -> usize { self.available.len() }
+    pub fn is_empty(&self) -> bool { self.available.is_empty() }
+    pub fn bytes_used(&self) -> usize { self.bytes_used }
+    pub fn byte_budget(&self) -> usize { self.byte_budget }
+
+    /// Acquires an exact-size surface, reusing a released allocation when possible.
+    pub fn acquire(&mut self, width: u32, height: u32) -> Result<Framebuffer, String> {
+        if width == 0 || height == 0 {
+            return Err("framebuffer dimensions must be greater than zero".into());
+        }
+        if let Some(index) = self.available.iter().position(|frame| frame.width == width && frame.height == height) {
+            let mut frame = self.available.swap_remove(index);
+            self.bytes_used = self.bytes_used.saturating_sub(frame.pixels.len());
+            frame.pixels.fill(0);
+            frame.clip = None;
+            frame.clip_stack.clear();
+            frame.dirty_regions.clear();
+            return Ok(frame);
+        }
+        Framebuffer::new(width, height)
+    }
+
+    /// Returns a surface to the pool. Surfaces larger than the remaining budget
+    /// are dropped instead of retained.
+    pub fn release(&mut self, mut frame: Framebuffer) {
+        let size = frame.pixels.len();
+        if size > self.byte_budget || self.bytes_used.saturating_add(size) > self.byte_budget {
+            return;
+        }
+        frame.clip = None;
+        frame.clip_stack.clear();
+        frame.dirty_regions.clear();
+        frame.pixels.fill(0);
+        self.bytes_used = self.bytes_used.saturating_add(size);
+        self.available.push(frame);
+    }
+
+    /// Changes the retention budget, dropping available surfaces if necessary.
+    pub fn set_byte_budget(&mut self, byte_budget: usize) {
+        self.byte_budget = byte_budget;
+        while self.bytes_used > self.byte_budget {
+            let Some(frame) = self.available.pop() else { break; };
+            self.bytes_used = self.bytes_used.saturating_sub(frame.pixels.len());
+        }
+    }
+
+    /// Drops all currently available allocations.
+    pub fn clear(&mut self) {
+        self.available.clear();
+        self.bytes_used = 0;
+    }
+}
+
 /// A bounded cache of completed framebuffer renders.
 ///
 /// The caller supplies a stable key derived from the element's content and
@@ -1743,6 +1813,43 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 }
 
 #[cfg(test)]
+#[test]
+    fn framebuffer_pool_reuses_and_resets_surfaces() {
+        let mut pool = FramebufferPool::new(1024);
+        let mut frame = pool.acquire(4, 3).unwrap();
+        frame.pixels.fill(255);
+        frame.set_clip(1, 1, 2, 2);
+        frame.save_clip();
+        frame.mark_dirty_region(0, 0, 2, 2);
+        pool.release(frame);
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.bytes_used(), 48);
+
+        let reused = pool.acquire(4, 3).unwrap();
+        assert_eq!(pool.len(), 0);
+        assert_eq!(pool.bytes_used(), 0);
+        assert!(reused.pixels.iter().all(|byte| *byte == 0));
+        assert!(reused.dirty_regions().is_empty());
+        assert_eq!(reused.clip_stack_depth(), 0);
+        assert_eq!(reused.clip, None);
+    }
+
+    #[test]
+    fn framebuffer_pool_respects_memory_budget() {
+        let mut pool = FramebufferPool::new(32);
+        pool.release(Framebuffer::new(4, 3).unwrap());
+        assert!(pool.is_empty());
+        assert_eq!(pool.bytes_used(), 0);
+
+        pool.set_byte_budget(128);
+        pool.release(Framebuffer::new(4, 3).unwrap());
+        assert_eq!(pool.bytes_used(), 48);
+        pool.set_byte_budget(16);
+        assert!(pool.is_empty());
+        assert_eq!(pool.bytes_used(), 0);
+    }
+
+    
 mod tests {
     use super::*;
 
