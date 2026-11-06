@@ -2163,7 +2163,7 @@ mod tests {
 
     #[test]
     fn tiled_surface_try_pixel_and_rect_write_across_tiles() {
-        let palette = test_palette();
+        let palette = test_palette(&[Color::rgb(12, 34, 56), Color::rgb(90, 80, 70)]);
         let mut surface = TiledSurface::with_tile_size(8, 8, 4).unwrap();
         surface.try_set_pixel(&palette, 4, 1, Color::rgb(12, 34, 56)).unwrap();
         surface.try_fill_rect(&palette, 2, 3, 4, 2, Color::rgb(90, 80, 70)).unwrap();
@@ -2175,7 +2175,7 @@ mod tests {
 
     #[test]
     fn tiled_surface_alpha_blends_over_transparent_pixels() {
-        let palette = test_palette();
+        let palette = test_palette(&[Color::rgb(200, 40, 20)]);
         let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
         surface.blend_pixel(&palette, 1, 1, Color::rgb(200, 40, 20), 128).unwrap();
         let pixel = surface.pixel_rgba(1, 1).unwrap();
@@ -2184,7 +2184,7 @@ mod tests {
 
     #[test]
     fn tiled_surface_alpha_blends_within_tile() {
-        let palette = test_palette();
+        let palette = test_palette(&[Color::rgb(0, 0, 255), Color::rgb(255, 0, 0)]);
         let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
         surface.try_set_pixel(&palette, 1, 1, Color::rgb(0, 0, 255)).unwrap();
         surface.blend_pixel(&palette, 1, 1, Color::rgb(255, 0, 0), 128).unwrap();
@@ -2197,7 +2197,7 @@ mod tests {
 
     #[test]
     fn tiled_surface_composites_sparse_tiles_with_alpha_and_offset() {
-        let palette = test_palette();
+        let palette = test_palette(&[Color::rgb(255, 0, 0), Color::rgb(0, 255, 0)]);
         let mut surface = TiledSurface::with_tile_size(8, 8, 4).unwrap();
         surface.blend_pixel(&palette, 1, 1, Color::rgb(255, 0, 0), 128).unwrap();
         surface.try_set_pixel(&palette, 5, 2, Color::rgb(0, 255, 0)).unwrap();
@@ -2212,7 +2212,7 @@ mod tests {
 
     #[test]
     fn tiled_surface_composite_respects_target_clip() {
-        let palette = test_palette();
+        let palette = test_palette(&[Color::WHITE]);
         let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
         surface.try_fill_rect(&palette, 0, 0, 4, 4, Color::WHITE).unwrap();
         let mut target = Framebuffer::new(6, 6).unwrap();
