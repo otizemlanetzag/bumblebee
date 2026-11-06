@@ -692,7 +692,7 @@ impl Framebuffer {
                 if !self.in_bounds(x, y) { continue; }
                 let offset = self.offset(x as u32, y as u32);
                 self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
-                self.mark_dirty_region(x, y, 1, 1);
+                self.mark_dirty_region(x as i32, y, 1, 1);
             }
         }
     }
@@ -834,7 +834,6 @@ impl Framebuffer {
                     if !self.in_bounds(px as i32, y) { continue; }
                     let offset = self.offset(px as u32, y as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
-                    self.mark_dirty_region(px as i32, y, 1, 1);
                     self.mark_dirty_region(px as i32, y, 1, 1);
                 }
             }
@@ -1060,6 +1059,7 @@ impl Framebuffer {
                     if !self.in_bounds(px as i32, y) { continue; }
                     let offset = self.offset(px as u32, y as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                    self.mark_dirty_region(px as i32, y, 1, 1);
                 }
             }
         }
