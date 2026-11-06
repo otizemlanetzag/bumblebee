@@ -84,14 +84,14 @@ fn modular_inverse_24(value: u32) -> u32 {
         (r, new_r) = (new_r, r - quotient * new_r);
     }
 
-    if r != 1 {
-        return 0;
-    }
+    if r != 1 { return 0; }
     t.rem_euclid(modulus) as u32
 }
 
 fn unpermute(value: u32) -> u32 {
-    let inverse = modular_inverse_24(PERMUTATION_MULTIPLIER);
+    // Compute the inverse only once; this function is used for every lookup.
+    static INVERSE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let inverse = *INVERSE.get_or_init(|| modular_inverse_24(PERMUTATION_MULTIPLIER));
     let mixed = value.wrapping_mul(inverse) & COLOR_MASK;
     // Inverse of x ^= x >> 8 over a 24-bit word.
     (mixed ^ (mixed >> 8) ^ (mixed >> 16)) & COLOR_MASK
