@@ -457,6 +457,38 @@ impl Framebuffer {
         std::mem::take(&mut self.dirty_regions)
     }
 
+    /// Copies only the source framebuffer's pending dirty rectangles into this
+    /// framebuffer. Dimensions must match; the destination clip is respected.
+    /// Source dirty state is left unchanged so multiple presenters can consume it.
+    pub fn copy_dirty_from(&mut self, source: &Framebuffer) -> Result<usize, String> {
+        if self.width != source.width || self.height != source.height {
+            return Err("source and destination framebuffer dimensions must match".into());
+        }
+        let regions = source.dirty_regions.clone();
+        let mut copied = 0usize;
+        for region in regions {
+            let mut left = region.x.min(self.width);
+            let mut top = region.y.min(self.height);
+            let mut right = region.x.saturating_add(region.width).min(self.width);
+            let mut bottom = region.y.saturating_add(region.height).min(self.height);
+            if let Some((clip_left, clip_top, clip_right, clip_bottom)) = self.clip {
+                left = left.max(clip_left);
+                top = top.max(clip_top);
+                right = right.min(clip_right);
+                bottom = bottom.min(clip_bottom);
+            }
+            if left >= right || top >= bottom { continue; }
+            for y in top..bottom {
+                let start = self.offset(left, y);
+                let end = self.offset(right, y);
+                self.pixels[start..end].copy_from_slice(&source.pixels[start..end]);
+            }
+            self.mark_dirty_region(left as i32, top as i32, right - left, bottom - top);
+            copied += 1;
+        }
+        Ok(copied)
+    }
+
     /// Marks a rectangle as changed. It is clipped to the framebuffer and the
     /// active drawing clip, then merged with any overlapping/touching region.
     pub fn mark_dirty_region(&mut self, x: i32, y: i32, width: u32, height: u32) {
@@ -522,7 +554,7 @@ impl Framebuffer {
     /// Unlike clear(), this is useful for off-screen compositing layers.
     pub fn clear_transparent(&mut self) {
         self.dirty_regions.clear();
-        self.mark_dirty_region(0, 0, self.width, self.height);
+        self.dirty_regions.push(DirtyRegion { x: 0, y: 0, width: self.width, height: self.height });
         self.pixels.fill(0);
     }
 
@@ -1258,6 +1290,42 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_dirty_from_copies_only_marked_pixels() {
+        let mut source = Framebuffer::new(4, 3).unwrap();
+        let mut target = Framebuffer::new(4, 3).unwrap();
+        source.pixels.fill(0);
+        source.pixels[4..8].copy_from_slice(&[10, 20, 30, 255]);
+        source.mark_dirty_region(1, 0, 1, 1);
+        let copied = target.copy_dirty_from(&source).unwrap();
+        assert_eq!(copied, 1);
+        assert_eq!(&target.pixels[4..8], &[10, 20, 30, 255]);
+        assert_eq!(&target.pixels[0..4], &[0, 0, 0, 0]);
+        assert_eq!(target.dirty_regions(), &[DirtyRegion { x: 1, y: 0, width: 1, height: 1 }]);
+        assert_eq!(source.dirty_regions().len(), 1);
+    }
+
+    #[test]
+    fn copy_dirty_from_respects_destination_clip() {
+        let mut source = Framebuffer::new(4, 4).unwrap();
+        let mut target = Framebuffer::new(4, 4).unwrap();
+        source.pixels.fill(255);
+        source.mark_dirty_region(0, 0, 4, 4);
+        target.set_clip(1, 1, 2, 2);
+        assert_eq!(target.copy_dirty_from(&source).unwrap(), 1);
+        assert_eq!(target.dirty_regions(), &[DirtyRegion { x: 1, y: 1, width: 2, height: 2 }]);
+        assert_eq!(&target.pixels[target.offset(0, 0)..target.offset(0, 0)+4], &[0, 0, 0, 0]);
+        assert_eq!(&target.pixels[target.offset(1, 1)..target.offset(1, 1)+4], &[255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn transparent_clear_marks_full_frame_even_with_clip() {
+        let mut frame = Framebuffer::new(7, 5).unwrap();
+        frame.set_clip(2, 1, 2, 2);
+        frame.clear_transparent();
+        assert_eq!(frame.dirty_regions(), &[DirtyRegion { x: 0, y: 0, width: 7, height: 5 }]);
+    }
 
     #[test]
     fn dirty_regions_merge_and_respect_clip() {
