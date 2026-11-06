@@ -595,6 +595,7 @@ impl Framebuffer {
                 if self.in_bounds(x, y) {
                     let offset = self.offset(x as u32, y as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                    self.mark_dirty_region(x, y, 1, 1);
                 }
             }
         }
@@ -691,6 +692,7 @@ impl Framebuffer {
                 if !self.in_bounds(x, y) { continue; }
                 let offset = self.offset(x as u32, y as u32);
                 self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                self.mark_dirty_region(x, y, 1, 1);
             }
         }
     }
@@ -734,6 +736,7 @@ impl Framebuffer {
                 if dx * dx + dy * dy <= radius_squared {
                     let offset = self.offset(px as u32, py as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                    self.mark_dirty_region(px as i32, py as i32, 1, 1);
                 }
             }
         }
@@ -794,6 +797,7 @@ impl Framebuffer {
                 if !in_inner && self.in_bounds(px as i32, py as i32) {
                     let offset = self.offset(px as u32, py as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                    self.mark_dirty_region(px as i32, py as i32, 1, 1);
                 }
             }
         }
@@ -830,6 +834,8 @@ impl Framebuffer {
                     if !self.in_bounds(px as i32, y) { continue; }
                     let offset = self.offset(px as u32, y as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                    self.mark_dirty_region(px as i32, y, 1, 1);
+                    self.mark_dirty_region(px as i32, y, 1, 1);
                 }
             }
         }
@@ -1225,6 +1231,7 @@ impl Layer {
                         ((premultiplied + out_alpha / 2) / out_alpha).min(255) as u8;
                 }
                 target.pixels[target_offset + 3] = out_alpha.min(255) as u8;
+                target.mark_dirty_region(x as i32, y as i32, 1, 1);
             }
         }
         Ok(())
