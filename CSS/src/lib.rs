@@ -2217,6 +2217,31 @@ mod tests {
     }
 
     #[test]
+    fn tiled_surface_fallible_line_reports_success_across_tiles() {
+        let color = Color::rgb(31, 42, 53);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(8, 8, 2).unwrap();
+        surface.try_draw_line(&palette, 0, 0, 7, 7, color).unwrap();
+        for coordinate in 0..8 {
+            assert_eq!(surface.pixel_rgba(coordinate, coordinate), Some([31, 42, 53, 255]));
+        }
+        assert_eq!(surface.allocated_tiles(), 4);
+    }
+
+    #[test]
+    fn tiled_surface_rounded_rect_has_rounded_corners() {
+        let color = Color::rgb(70, 80, 90);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(12, 12, 4).unwrap();
+        surface.try_fill_rounded_rect(&palette, 1, 1, 10, 10, 4, color).unwrap();
+        assert_eq!(surface.pixel_rgba(1, 1), None);
+        assert_eq!(surface.pixel_rgba(5, 1), Some([70, 80, 90, 255]));
+        assert_eq!(surface.pixel_rgba(1, 5), Some([70, 80, 90, 255]));
+        assert_eq!(surface.pixel_rgba(10, 10), None);
+        assert_eq!(surface.pixel_rgba(6, 6), Some([70, 80, 90, 255]));
+    }
+
+    #[test]
     fn tiled_surface_alpha_blends_over_transparent_pixels() {
         let palette = test_palette(&[Color::rgb(200, 40, 20)]);
         let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
