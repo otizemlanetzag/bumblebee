@@ -459,6 +459,7 @@ impl Framebuffer {
         let c = palette.sample(color);
         for py in top..bottom {
             for px in left..right {
+                if !self.in_bounds(px as i32, py as i32) { continue; }
                 let offset = self.offset(px, py);
                 self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
             }
