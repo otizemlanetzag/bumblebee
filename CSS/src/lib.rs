@@ -498,7 +498,7 @@ impl Framebuffer {
 
     pub fn clear(&mut self, palette: &Palette, color: Color) {
         self.dirty_regions.clear();
-        self.mark_dirty_region(0, 0, self.width, self.height);
+        self.dirty_regions.push(DirtyRegion { x: 0, y: 0, width: self.width, height: self.height });
         let c = palette.sample(color);
         for pixel in self.pixels.chunks_exact_mut(4) {
             pixel.copy_from_slice(&[c.r, c.g, c.b, 255]);
@@ -1238,6 +1238,34 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dirty_regions_merge_and_respect_clip() {
+        let mut frame = Framebuffer::new(20, 20).unwrap();
+        frame.set_clip(5, 5, 10, 10);
+        frame.mark_dirty_region(0, 0, 10, 10);
+        frame.mark_dirty_region(9, 9, 5, 5);
+        assert_eq!(frame.dirty_regions(), &[DirtyRegion { x: 5, y: 5, width: 9, height: 9 }]);
+        let taken = frame.take_dirty_regions();
+        assert_eq!(taken.len(), 1);
+        assert!(!frame.has_dirty_regions());
+    }
+
+    #[test]
+    fn pixel_writes_are_reported_as_dirty() {
+        let mut frame = Framebuffer::new(4, 4).unwrap();
+        // The palette is not needed to exercise the public region accumulator.
+        frame.mark_dirty_region(2, 1, 1, 1);
+        assert_eq!(frame.take_dirty_regions(), vec![DirtyRegion { x: 2, y: 1, width: 1, height: 1 }]);
+    }
+
+    #[test]
+    fn full_clear_marks_entire_frame_even_when_clipped() {
+        let mut frame = Framebuffer::new(8, 6).unwrap();
+        frame.set_clip(2, 2, 2, 2);
+        frame.clear_transparent();
+        assert_eq!(frame.dirty_regions(), &[DirtyRegion { x: 0, y: 0, width: 8, height: 6 }]);
+    }
 
     #[test]
     fn render_cache_reuses_and_invalidates_frames() {
