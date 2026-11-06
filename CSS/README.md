@@ -30,8 +30,12 @@ frame.clear(&palette, Color::WHITE);
 - Individual pixels and alpha blending
 - Filled rectangles and rectangle borders
 - Lines
-- Filled circles
+- Filled circles and ellipses
+- Rounded rectangles and rounded borders
+- Filled polygons using an even-odd scanline fill rule
+- Open and closed polylines
 - Horizontal two-color linear gradients
+- Elliptical radial gradients
 - PNG framebuffer export for testing
 
 Run a visual smoke-test image:
@@ -42,6 +46,6 @@ cargo run --manifest-path CSS/Cargo.toml -- demo CSS/all-rgb-colors.png output.p
 
 ## Important limitations
 
-This is a first rendering core, not a complete browser renderer. Rounded rectangles, ellipses, polygon/path rasterization, SVG parsing, CSS gradients beyond the horizontal two-stop case, transforms, clipping stacks, compositing layers, text integration, video/image surfaces, OS window presentation, and GPU acceleration are not implemented yet.
+This is a first rendering core, not a complete browser renderer. SVG parsing, cubic/quadratic curve rasterization, full CSS gradient syntax and color-stop handling, transforms, clipping stacks, compositing layers, text integration, video/image surfaces, OS window presentation, and GPU acceleration are not implemented yet. Polygon support currently accepts already-computed points; it is not an SVG path parser.
 
 The PNG palette is a source of exact RGB values, not a way to represent alpha. Alpha is handled separately by the framebuffer. For speed, palette inversion is cached and drawing operations sample a color once where practical.
