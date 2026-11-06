@@ -1545,16 +1545,10 @@ impl TiledSurface {
     }
 
 
-    /// Draws a Bresenham line. Only tiles crossed by the line are allocated.
-    pub fn draw_line(
-        &mut self,
-        palette: &Palette,
-        x0: i32,
-        y0: i32,
-        x1: i32,
-        y1: i32,
-        color: Color,
-    ) {
+    /// Draws a Bresenham line and reports tile-allocation failures.
+    pub fn try_draw_line(
+        &mut self, palette: &Palette, x0: i32, y0: i32, x1: i32, y1: i32, color: Color,
+    ) -> Result<(), String> {
         let (mut x, mut y) = (x0 as i64, y0 as i64);
         let end_x = x1 as i64;
         let end_y = y1 as i64;
@@ -1565,71 +1559,62 @@ impl TiledSurface {
         let mut error = dx + dy;
         loop {
             if x >= 0 && y >= 0 && x < self.width as i64 && y < self.height as i64 {
-                self.set_pixel(palette, x as i32, y as i32, color);
+                self.try_set_pixel(palette, x as i32, y as i32, color)?;
             }
             if x == end_x && y == end_y { break; }
             let twice = 2 * error;
             if twice >= dy { error += dy; x += sx; }
             if twice <= dx { error += dx; y += sy; }
         }
+        Ok(())
     }
 
-    /// Fills a circle using horizontal spans, allocating only intersected tiles.
-    pub fn fill_circle(
-        &mut self,
-        palette: &Palette,
-        center_x: i32,
-        center_y: i32,
-        radius: u32,
-        color: Color,
-    ) {
+    /// Convenience line drawing. Use try_draw_line when allocation errors matter.
+    pub fn draw_line(&mut self, palette: &Palette, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+        let _ = self.try_draw_line(palette, x0, y0, x1, y1, color);
+    }
+
+    /// Fills a circle and reports tile-allocation failures.
+    pub fn try_fill_circle(
+        &mut self, palette: &Palette, center_x: i32, center_y: i32, radius: u32, color: Color,
+    ) -> Result<(), String> {
         let radius = radius as i64;
         let radius_squared = radius.saturating_mul(radius);
         let top = (center_y as i64 - radius).max(0);
         let bottom = (center_y as i64 + radius).min(self.height as i64 - 1);
-        if top > bottom { return; }
-
+        if top > bottom { return Ok(()); }
         for y in top..=bottom {
             let dy = y - center_y as i64;
             let remaining = radius_squared.saturating_sub(dy.saturating_mul(dy));
             let span = (remaining as f64).sqrt() as i64;
-            let left = center_x as i64 - span;
-            let right = center_x as i64 + span;
-            let clipped_left = left.max(0);
-            let clipped_right = right.min(self.width as i64 - 1);
-            if clipped_left <= clipped_right {
-                self.fill_rect(
-                    palette,
-                    clipped_left as i32,
-                    y as i32,
-                    (clipped_right - clipped_left + 1) as u32,
-                    1,
-                    color,
-                );
+            let left = (center_x as i64 - span).max(0);
+            let right = (center_x as i64 + span).min(self.width as i64 - 1);
+            if left <= right {
+                self.try_fill_rect(palette, left as i32, y as i32,
+                    (right - left + 1) as u32, 1, color)?;
             }
         }
+        Ok(())
     }
 
-    /// Fills an ellipse using horizontal spans; only intersected tiles are allocated.
-    pub fn fill_ellipse(
-        &mut self,
-        palette: &Palette,
-        center_x: i32,
-        center_y: i32,
-        radius_x: u32,
-        radius_y: u32,
-        color: Color,
-    ) {
+    /// Convenience circle fill. Use try_fill_circle when allocation errors matter.
+    pub fn fill_circle(&mut self, palette: &Palette, center_x: i32, center_y: i32, radius: u32, color: Color) {
+        let _ = self.try_fill_circle(palette, center_x, center_y, radius, color);
+    }
+
+    /// Fills an ellipse and reports tile-allocation failures.
+    pub fn try_fill_ellipse(
+        &mut self, palette: &Palette, center_x: i32, center_y: i32,
+        radius_x: u32, radius_y: u32, color: Color,
+    ) -> Result<(), String> {
         if radius_x == 0 || radius_y == 0 {
-            self.set_pixel(palette, center_x, center_y, color);
-            return;
+            return self.try_set_pixel(palette, center_x, center_y, color);
         }
         let rx = radius_x as f64;
         let ry = radius_y as f64;
         let top = (center_y as i64 - radius_y as i64).max(0);
         let bottom = (center_y as i64 + radius_y as i64).min(self.height as i64 - 1);
-        if top > bottom { return; }
-
+        if top > bottom { return Ok(()); }
         for y in top..=bottom {
             let normalized_y = (y - center_y as i64) as f64 / ry;
             let remaining = (1.0 - normalized_y * normalized_y).max(0.0);
@@ -1637,43 +1622,49 @@ impl TiledSurface {
             let left = (center_x as i64 - span).max(0);
             let right = (center_x as i64 + span).min(self.width as i64 - 1);
             if left <= right {
-                self.fill_rect(
-                    palette,
-                    left as i32,
-                    y as i32,
-                    (right - left + 1) as u32,
-                    1,
-                    color,
-                );
+                self.try_fill_rect(palette, left as i32, y as i32,
+                    (right - left + 1) as u32, 1, color)?;
             }
         }
+        Ok(())
     }
 
-    /// Draws the outline of a rectangle without allocating tiles outside its edges.
-    pub fn stroke_rect(
-        &mut self,
-        palette: &Palette,
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32,
-        thickness: u32,
-        color: Color,
+    /// Convenience ellipse fill. Use try_fill_ellipse when allocation errors matter.
+    pub fn fill_ellipse(
+        &mut self, palette: &Palette, center_x: i32, center_y: i32,
+        radius_x: u32, radius_y: u32, color: Color,
     ) {
-        if width == 0 || height == 0 || thickness == 0 { return; }
+        let _ = self.try_fill_ellipse(palette, center_x, center_y, radius_x, radius_y, color);
+    }
+
+    /// Draws a rectangle outline and reports tile-allocation failures.
+    pub fn try_stroke_rect(
+        &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
+        thickness: u32, color: Color,
+    ) -> Result<(), String> {
+        if width == 0 || height == 0 || thickness == 0 { return Ok(()); }
         let t = thickness.min(width).min(height);
-        self.fill_rect(palette, x, y, width, t, color);
+        self.try_fill_rect(palette, x, y, width, t, color)?;
         if height > t {
             let bottom_y = (y as i64 + height as i64 - t as i64)
                 .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            self.fill_rect(palette, x, bottom_y, width, t, color);
+            self.try_fill_rect(palette, x, bottom_y, width, t, color)?;
         }
-        self.fill_rect(palette, x, y, t, height, color);
+        self.try_fill_rect(palette, x, y, t, height, color)?;
         if width > t {
             let right_x = (x as i64 + width as i64 - t as i64)
                 .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            self.fill_rect(palette, right_x, y, t, height, color);
+            self.try_fill_rect(palette, right_x, y, t, height, color)?;
         }
+        Ok(())
+    }
+
+    /// Convenience rectangle outline. Use try_stroke_rect when allocation errors matter.
+    pub fn stroke_rect(
+        &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
+        thickness: u32, color: Color,
+    ) {
+        let _ = self.try_stroke_rect(palette, x, y, width, height, thickness, color);
     }
 
     /// Composites allocated tiles over a framebuffer using source-over alpha.
