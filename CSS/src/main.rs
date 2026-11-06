@@ -40,6 +40,19 @@ fn main() {
             frame.stroke_rect(&palette, 40, 180, 220, 90, 3, Color::from_hex("#FFFFFF").unwrap());
             frame.fill_circle(&palette, 390, 225, 48, Color::from_hex("#31D17C").unwrap());
             frame.draw_line(&palette, 500, 180, 740, 270, Color::from_hex("#FFB020").unwrap());
+            frame.fill_rounded_rect(&palette, 500, 320, 240, 90, 18, Color::from_hex("#D94B70").unwrap());
+            frame.stroke_rounded_rect(&palette, 500, 320, 240, 90, 18, 4, Color::WHITE);
+            frame.fill_ellipse(&palette, 350, 365, 75, 38, Color::from_hex("#F4C542").unwrap());
+            frame.fill_polygon(
+                &palette,
+                &[(90, 330), (150, 285), (210, 330), (190, 410), (110, 410)],
+                Color::from_hex("#42C7B8").unwrap(),
+            );
+            frame.radial_gradient_ellipse(
+                &palette, 390, 105, 110, 50,
+                Color::WHITE,
+                Color::from_hex("#13A4E8").unwrap(),
+            );
             frame.save_png(output_path).unwrap_or_else(|e| fail(e));
             println!("Rendered demo to {}", output_path.display());
         }
