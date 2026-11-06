@@ -2380,6 +2380,19 @@ mod tests {
     }
 
     #[test]
+    fn tiled_surface_dirty_regions_use_global_coordinates_and_can_be_consumed() {
+        let color = Color::rgb(9, 19, 29);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(12, 12, 4).unwrap();
+        surface.try_set_pixel(&palette, 5, 6, color).unwrap();
+        let regions = surface.dirty_regions();
+        assert_eq!(regions, vec![DirtyRegion { x: 1, y: 2, width: 1, height: 1 }]);
+        let consumed = surface.take_dirty_regions();
+        assert_eq!(consumed, regions);
+        assert!(surface.dirty_regions().is_empty());
+    }
+
+    #[test]
     fn tiled_surface_alpha_blends_over_transparent_pixels() {
         let palette = test_palette(&[Color::rgb(200, 40, 20)]);
         let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
