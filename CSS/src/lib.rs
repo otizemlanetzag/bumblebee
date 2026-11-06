@@ -367,6 +367,8 @@ impl VectorPath {
 pub struct Framebuffer {
     width: u32,
     height: u32,
+    /// Optional framebuffer-space clipping rectangle: (left, top, right, bottom).
+    clip: Option<(u32, u32, u32, u32)>,
     /// RGBA output pixels, row-major.
     pixels: Vec<u8>,
 }
@@ -383,9 +385,35 @@ impl Framebuffer {
         Ok(Self {
             width,
             height,
+            clip: None,
             pixels: vec![0; byte_len],
         })
     }
+
+    /// Replaces the current clip rectangle. Coordinates are clipped to the framebuffer.
+    pub fn set_clip(&mut self, x: i32, y: i32, width: u32, height: u32) {
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).max(0).min(self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).max(0).min(self.height as i64) as u32;
+        self.clip = Some((left, top, right.max(left), bottom.max(top)));
+    }
+
+    /// Intersects a new clip rectangle with the existing clip.
+    pub fn intersect_clip(&mut self, x: i32, y: i32, width: u32, height: u32) {
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).max(0).min(self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).max(0).min(self.height as i64) as u32;
+        let next = (left, top, right.max(left), bottom.max(top));
+        self.clip = Some(match self.clip {
+            Some((a, b, c, d)) => (a.max(next.0), b.max(next.1), c.min(next.2), d.min(next.3)),
+            None => next,
+        });
+    }
+
+    /// Removes clipping and restores drawing to the full framebuffer.
+    pub fn reset_clip(&mut self) { self.clip = None; }
 
     pub fn width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
@@ -500,6 +528,47 @@ impl Framebuffer {
                 lerp(start.b, end.b, t),
             );
             self.fill_rect(palette, x + dx as i32, y, 1, height, color);
+        }
+    }
+
+    /// Draws an anti-aliased line using coverage-weighted pixel blending.
+    pub fn draw_line_antialiased(
+        &mut self,
+        palette: &Palette,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        color: Color,
+    ) {
+        // Xiaolin Wu's line algorithm. Steep lines are transposed.
+        let steep = (y1 - y0).abs() > (x1 - x0).abs();
+        let (mut ax, mut ay, mut bx, mut by) = (x0, y0, x1, y1);
+        if steep {
+            std::mem::swap(&mut ax, &mut ay);
+            std::mem::swap(&mut bx, &mut by);
+        }
+        if ax > bx {
+            std::mem::swap(&mut ax, &mut bx);
+            std::mem::swap(&mut ay, &mut by);
+        }
+        let dx = bx - ax;
+        if dx.abs() < f32::EPSILON {
+            self.blend_pixel(palette, ax.round() as i32, ay.round() as i32, color, 255);
+            return;
+        }
+        let gradient = (by - ay) / dx;
+        let mut y = ay;
+        let start = ax.ceil() as i32;
+        let end = bx.floor() as i32;
+        for x in start..=end {
+            let base_y = y.floor();
+            let fraction = y - base_y;
+            let (px0, py0) = if steep { (base_y as i32, x) } else { (x, base_y as i32) };
+            let (px1, py1) = if steep { (base_y as i32 + 1, x) } else { (x, base_y as i32 + 1) };
+            self.blend_pixel(palette, px0, py0, color, ((1.0 - fraction) * 255.0).round() as u8);
+            self.blend_pixel(palette, px1, py1, color, (fraction * 255.0).round() as u8);
+            y += gradient;
         }
     }
 
@@ -902,7 +971,14 @@ impl Framebuffer {
     }
 
     fn in_bounds(&self, x: i32, y: i32) -> bool {
-        x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height
+        if x < 0 || y < 0 || (x as u32) >= self.width || (y as u32) >= self.height {
+            return false;
+        }
+        match self.clip {
+            Some((left, top, right, bottom)) =>
+                (x as u32) >= left && (x as u32) < right && (y as u32) >= top && (y as u32) < bottom,
+            None => true,
+        }
     }
 
     fn offset(&self, x: u32, y: u32) -> usize {
