@@ -369,6 +369,8 @@ pub struct Framebuffer {
     height: u32,
     /// Optional framebuffer-space clipping rectangle: (left, top, right, bottom).
     clip: Option<(u32, u32, u32, u32)>,
+    /// Saved clipping states, including None for the full framebuffer.
+    clip_stack: Vec<Option<(u32, u32, u32, u32)>>,
     /// RGBA output pixels, row-major.
     pixels: Vec<u8>,
 }
@@ -386,6 +388,7 @@ impl Framebuffer {
             width,
             height,
             clip: None,
+            clip_stack: Vec::new(),
             pixels: vec![0; byte_len],
         })
     }
@@ -411,6 +414,19 @@ impl Framebuffer {
             None => next,
         });
     }
+
+    /// Saves the current clip state so nested drawing can restore it later.
+    pub fn save_clip(&mut self) { self.clip_stack.push(self.clip); }
+
+    /// Restores the latest saved clip state. Returns false when the stack is empty.
+    pub fn restore_clip(&mut self) -> bool {
+        match self.clip_stack.pop() {
+            Some(clip) => { self.clip = clip; true }
+            None => false,
+        }
+    }
+
+    pub fn clip_stack_depth(&self) -> usize { self.clip_stack.len() }
 
     /// Removes clipping and restores drawing to the full framebuffer.
     pub fn reset_clip(&mut self) { self.clip = None; }
@@ -597,6 +613,7 @@ impl Framebuffer {
             let right = (center_x as i64 + span).min(self.width as i64 - 1);
             if left > right { continue; }
             for x in left..=right {
+                if !self.in_bounds(x, y) { continue; }
                 let offset = self.offset(x as u32, y as u32);
                 self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
             }
@@ -699,7 +716,7 @@ impl Framebuffer {
                     inner_height as f64,
                     inner_radius,
                 );
-                if !in_inner {
+                if !in_inner && self.in_bounds(px as i32, py as i32) {
                     let offset = self.offset(px as u32, py as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
                 }
@@ -735,6 +752,7 @@ impl Framebuffer {
                 let left = (pair[0].ceil() as i64).max(0);
                 let right = (pair[1].ceil() as i64).min(self.width as i64);
                 for px in left..right {
+                    if !self.in_bounds(px as i32, y) { continue; }
                     let offset = self.offset(px as u32, y as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
                 }
@@ -958,6 +976,7 @@ impl Framebuffer {
                 let left = (pair[0].ceil() as i64).max(0);
                 let right = (pair[1].ceil() as i64).min(self.width as i64);
                 for px in left..right {
+                    if !self.in_bounds(px as i32, y) { continue; }
                     let offset = self.offset(px as u32, y as u32);
                     self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
                 }
@@ -1038,6 +1057,20 @@ mod tests {
             assert!(seen.insert(permute(value)));
             assert_eq!(unpermute(permute(value)), value);
         }
+    }
+
+    #[test]
+    fn saved_clip_state_restores_after_nested_clipping() {
+        let mut frame = Framebuffer::new(8, 8).unwrap();
+        frame.set_clip(1, 1, 6, 6);
+        frame.save_clip();
+        frame.intersect_clip(3, 3, 2, 2);
+        assert!(frame.in_bounds(3, 3));
+        assert!(!frame.in_bounds(2, 2));
+        assert!(frame.restore_clip());
+        assert!(frame.in_bounds(2, 2));
+        assert!(!frame.in_bounds(0, 0));
+        assert!(!frame.restore_clip());
     }
 
     #[test]
