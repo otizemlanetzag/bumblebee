@@ -31,7 +31,7 @@ frame.clear(&palette, Color::WHITE);
 - Dirty-region tracking for pixel writes, alpha blends, all filled shape rasterizers, layer compositing, and full-frame clears; `take_dirty_regions()` returns and resets the pending rectangles
 - Incremental framebuffer synchronization with `copy_dirty_from()`, which copies only changed rectangles, respects the destination clip, and leaves source dirty state intact for multiple consumers
 - Independent off-screen layers with visibility toggles and opacity
-- Ordered `LayerStack` scene composition with incremental dirty-region recomposition: when a layer changes, only affected target rectangles are cleared and all layers are replayed inside those rectangles, preserving correct overlap; visibility and opacity changes trigger a full rebuild
+- Ordered `LayerStack` scene composition with layer addition, removal, z-order changes, opacity and visibility controls, plus incremental dirty-region recomposition: when a layer changes, only affected target rectangles are cleared and all layers are replayed inside those rectangles, preserving correct overlap; visibility and opacity changes trigger a full rebuild
 - Bounded render cache for reusable framebuffer snapshots, with explicit invalidation and oldest-first memory-budget eviction
 - Incremental layer compositing with `composite_dirty_into()`, which scans only pending source dirty regions and preserves them for multiple targets; perform a full scene recomposition after changing layer visibility or opacity
 - Source-over alpha compositing of transparent layers into a target framebuffer
