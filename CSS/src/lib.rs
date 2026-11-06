@@ -1684,6 +1684,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn viewport_renderer_updates_only_source_dirty_regions_after_initial_draw() {
+        let mut source = Framebuffer::new(4, 1).unwrap();
+        for x in 0..4 {
+            let offset = source.offset(x, 0);
+            source.pixels[offset..offset + 4].copy_from_slice(&[10, 0, 0, 255]);
+        }
+        let viewport = Viewport::new(4, 1).unwrap();
+        let mut target = Framebuffer::new(4, 1).unwrap();
+        let mut presenter = ViewportRenderer::new();
+
+        assert_eq!(presenter.render_dirty_into(&viewport, &source, &mut target, 0, 0).unwrap(), 1);
+        target.take_dirty_regions();
+
+        let changed = source.offset(2, 0);
+        source.pixels[changed..changed + 4].copy_from_slice(&[99, 0, 0, 255]);
+        source.mark_dirty_region(2, 0, 1, 1);
+        assert_eq!(presenter.render_dirty_into(&viewport, &source, &mut target, 0, 0).unwrap(), 1);
+        assert_eq!(&target.pixels[changed..changed + 4], &[99, 0, 0, 255]);
+        assert_eq!(target.dirty_regions(), &[DirtyRegion { x: 2, y: 0, width: 1, height: 1 }]);
+        assert_eq!(source.dirty_regions().len(), 1);
+    }
+
+    #[test]
+    fn viewport_renderer_redraws_when_scroll_changes() {
+        let mut source = Framebuffer::new(3, 1).unwrap();
+        source.pixels[0..12].copy_from_slice(&[
+            1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255
+        ]);
+        let mut viewport = Viewport::new(2, 1).unwrap();
+        let mut target = Framebuffer::new(2, 1).unwrap();
+        let mut presenter = ViewportRenderer::new();
+
+        presenter.render_dirty_into(&viewport, &source, &mut target, 0, 0).unwrap();
+        target.take_dirty_regions();
+        viewport.set_scroll(1.0, 0.0).unwrap();
+        assert_eq!(presenter.render_dirty_into(&viewport, &source, &mut target, 0, 0).unwrap(), 1);
+        assert_eq!(&target.pixels[0..8], &[2, 0, 0, 255, 3, 0, 0, 255]);
+        assert_eq!(target.dirty_regions(), &[DirtyRegion { x: 0, y: 0, width: 2, height: 1 }]);
+    }
+
+    #[test]
     fn viewport_scrolls_over_a_larger_source() {
         let mut source = Framebuffer::new(4, 2).unwrap();
         for x in 0..4 {
