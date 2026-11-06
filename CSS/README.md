@@ -28,6 +28,7 @@ frame.clear(&palette, Color::WHITE);
 ## Current drawing operations
 
 - Individual pixels and alpha blending
+- Dirty-region tracking for explicit invalidation, plus automatic tracking for pixel writes, alpha blends, rectangle fills, and full-frame clears; `take_dirty_regions()` returns and resets the pending rectangles
 - Independent off-screen layers with visibility toggles and opacity
 - Bounded render cache for reusable framebuffer snapshots, with explicit invalidation and oldest-first memory-budget eviction
 - Source-over alpha compositing of transparent layers into a target framebuffer
@@ -56,6 +57,8 @@ cargo run --manifest-path CSS/Cargo.toml -- demo CSS/all-rgb-colors.png output.p
 
 ## Important limitations
 
-This is a first rendering core, not a complete browser renderer. SVG parsing and SVG path-data tokenization are not implemented yet; vector paths must currently be constructed through the Rust API. Full CSS gradient syntax and color-stop handling, a anti-aliasing for all shape types, text integration, video/image surfaces, OS window presentation, and GPU acceleration are also pending. Affine transforms currently apply to vector paths, not to every primitive.
+This is a first rendering core, not a complete browser renderer. SVG parsing and SVG path-data tokenization are not implemented yet; vector paths must currently be constructed through the Rust API. Full CSS gradient syntax and color-stop handling, anti-aliasing for all shape types, text integration, video/image surfaces, OS window presentation, and GPU acceleration are also pending. Affine transforms currently apply to vector paths, not to every primitive.
 
 The PNG palette is a source of exact RGB values, not a way to represent alpha. Alpha is handled separately by the framebuffer. For speed, palette inversion is cached and drawing operations sample a color once where practical.
+
+Dirty-region tracking is currently conservative in scope: compound rasterizers that write directly into the pixel buffer are not all instrumented yet. Call `mark_dirty_region(x, y, width, height)` after such custom drawing when a downstream presenter needs precise invalidation. Regions are clipped to the framebuffer and active clip, and overlapping or adjacent regions are merged.
