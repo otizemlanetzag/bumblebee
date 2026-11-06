@@ -61,4 +61,4 @@ This is a first rendering core, not a complete browser renderer. SVG parsing and
 
 The PNG palette is a source of exact RGB values, not a way to represent alpha. Alpha is handled separately by the framebuffer. For speed, palette inversion is cached and drawing operations sample a color once where practical.
 
-Dirty regions are clipped to the framebuffer and active clip, and overlapping or adjacent regions are merged. Full-frame clear operations deliberately mark the entire framebuffer dirty, regardless of the active drawing clip, because they clear every pixel.
+Dirty regions are clipped to the framebuffer and active clip, and overlapping or adjacent regions are merged. The list is capped at 64 regions; if it grows beyond that, it is conservatively collapsed into one bounding rectangle to keep tracking memory bounded. Full-frame clear operations deliberately mark the entire framebuffer dirty, regardless of the active drawing clip, because they clear every pixel.
