@@ -1474,13 +1474,23 @@ impl TiledSurface {
         }
         let (ux, uy) = (x as u32, y as u32);
         let tile = self.tile_mut(ux / self.tile_size, uy / self.tile_size)?;
-        tile.blend_pixel(
-            palette,
-            (ux % self.tile_size) as i32,
-            (uy % self.tile_size) as i32,
-            color,
-            alpha,
-        );
+        let offset = tile.offset(ux % self.tile_size, uy % self.tile_size);
+        let source = palette.sample(color);
+        let source_alpha = alpha as u32;
+        let destination_alpha = tile.pixels[offset + 3] as u32;
+        let inverse = 255 - source_alpha;
+        let output_alpha = source_alpha + (destination_alpha * inverse + 127) / 255;
+        if output_alpha == 0 { return Ok(()); }
+        for channel in 0..3 {
+            let src = [source.r, source.g, source.b][channel] as u32;
+            let dst = tile.pixels[offset + channel] as u32;
+            let premultiplied = src * source_alpha
+                + (dst * destination_alpha * inverse + 127) / 255;
+            tile.pixels[offset + channel] =
+                ((premultiplied + output_alpha / 2) / output_alpha).min(255) as u8;
+        }
+        tile.pixels[offset + 3] = output_alpha.min(255) as u8;
+        tile.mark_dirty_region((ux % self.tile_size) as i32, (uy % self.tile_size) as i32, 1, 1);
         Ok(())
     }
 
@@ -2099,6 +2109,15 @@ mod tests {
         assert_eq!(surface.pixel_rgba(2, 3), Some([90, 80, 70, 255]));
         assert_eq!(surface.pixel_rgba(5, 4), Some([90, 80, 70, 255]));
         assert_eq!(surface.allocated_tiles(), 4);
+    }
+
+    #[test]
+    fn tiled_surface_alpha_blends_over_transparent_pixels() {
+        let palette = test_palette();
+        let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
+        surface.blend_pixel(&palette, 1, 1, Color::rgb(200, 40, 20), 128).unwrap();
+        let pixel = surface.pixel_rgba(1, 1).unwrap();
+        assert_eq!(pixel, [200, 40, 20, 128]);
     }
 
     #[test]
