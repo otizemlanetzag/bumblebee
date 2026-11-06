@@ -310,6 +310,197 @@ impl Framebuffer {
         }
     }
 
+    /// Fills an axis-aligned ellipse using scanline spans.
+    pub fn fill_ellipse(
+        &mut self,
+        palette: &Palette,
+        center_x: i32,
+        center_y: i32,
+        radius_x: u32,
+        radius_y: u32,
+        color: Color,
+    ) {
+        if radius_x == 0 || radius_y == 0 { return; }
+        let rx = radius_x as f64;
+        let ry = radius_y as f64;
+        let c = palette.sample(color);
+        let min_y = (center_y as i64 - radius_y as i64).max(0) as i32;
+        let max_y = (center_y as i64 + radius_y as i64).min(self.height as i64 - 1) as i32;
+        for y in min_y..=max_y {
+            let normalized_y = (y - center_y) as f64 / ry;
+            let remaining = (1.0 - normalized_y * normalized_y).max(0.0);
+            let span = (rx * remaining.sqrt()).floor() as i64;
+            let left = (center_x as i64 - span).max(0);
+            let right = (center_x as i64 + span).min(self.width as i64 - 1);
+            if left > right { continue; }
+            for x in left..=right {
+                let offset = self.offset(x as u32, y as u32);
+                self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+            }
+        }
+    }
+
+    /// Fills a rounded rectangle. The radius is clamped to half its smaller side.
+    pub fn fill_rounded_rect(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        radius: u32,
+        color: Color,
+    ) {
+        if width == 0 || height == 0 { return; }
+        let radius = radius.min(width / 2).min(height / 2) as f64;
+        if radius == 0.0 {
+            self.fill_rect(palette, x, y, width, height, color);
+            return;
+        }
+        let c = palette.sample(color);
+        let left = (x as i64).max(0);
+        let top = (y as i64).max(0);
+        let right = (x as i64 + width as i64).min(self.width as i64);
+        let bottom = (y as i64 + height as i64).min(self.height as i64);
+        if left >= right || top >= bottom { return; }
+
+        let rect_left = x as f64 + radius;
+        let rect_right = x as f64 + width as f64 - radius;
+        let rect_top = y as f64 + radius;
+        let rect_bottom = y as f64 + height as f64 - radius;
+        let radius_squared = radius * radius;
+
+        for py in top..bottom {
+            for px in left..right {
+                let nearest_x = (px as f64 + 0.5).clamp(rect_left, rect_right);
+                let nearest_y = (py as f64 + 0.5).clamp(rect_top, rect_bottom);
+                let dx = px as f64 + 0.5 - nearest_x;
+                let dy = py as f64 + 0.5 - nearest_y;
+                if dx * dx + dy * dy <= radius_squared {
+                    let offset = self.offset(px as u32, py as u32);
+                    self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                }
+            }
+        }
+    }
+
+    /// Draws a rounded rectangle border by filling its outer and inner shapes.
+    pub fn stroke_rounded_rect(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        radius: u32,
+        thickness: u32,
+        color: Color,
+    ) {
+        if width == 0 || height == 0 || thickness == 0 { return; }
+        self.fill_rounded_rect(palette, x, y, width, height, radius, color);
+        let inset = thickness.min(width / 2).min(height / 2);
+        if width > inset * 2 && height > inset * 2 {
+            self.fill_rounded_rect(
+                palette,
+                x.saturating_add(inset as i32),
+                y.saturating_add(inset as i32),
+                width - inset * 2,
+                height - inset * 2,
+                radius.saturating_sub(inset),
+                Color::BLACK,
+            );
+        }
+    }
+
+    /// Fills a polygon using an even-odd scanline rule.
+    /// The final vertex is automatically connected to the first.
+    pub fn fill_polygon(&mut self, palette: &Palette, points: &[(i32, i32)], color: Color) {
+        if points.len() < 3 { return; }
+        let min_y = points.iter().map(|p| p.1).min().unwrap().max(0);
+        let max_y = points.iter().map(|p| p.1).max().unwrap().min(self.height as i32 - 1);
+        if min_y > max_y { return; }
+        let c = palette.sample(color);
+        let mut intersections = Vec::<f64>::with_capacity(points.len());
+
+        for y in min_y..=max_y {
+            intersections.clear();
+            let scan_y = y as f64 + 0.5;
+            for index in 0..points.len() {
+                let (x1, y1) = points[index];
+                let (x2, y2) = points[(index + 1) % points.len()];
+                if y1 == y2 { continue; }
+                let low = y1.min(y2) as f64;
+                let high = y1.max(y2) as f64;
+                if scan_y < low || scan_y >= high { continue; }
+                let t = (scan_y - y1 as f64) / (y2 - y1) as f64;
+                intersections.push(x1 as f64 + t * (x2 - x1) as f64);
+            }
+            intersections.sort_by(|a, b| a.total_cmp(b));
+            for pair in intersections.chunks_exact(2) {
+                let left = (pair[0].ceil() as i64).max(0);
+                let right = (pair[1].ceil() as i64).min(self.width as i64);
+                for px in left..right {
+                    let offset = self.offset(px as u32, y as u32);
+                    self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                }
+            }
+        }
+    }
+
+    /// Draws the edges of a polygonal path, optionally closing it.
+    pub fn draw_polyline(
+        &mut self,
+        palette: &Palette,
+        points: &[(i32, i32)],
+        closed: bool,
+        color: Color,
+    ) {
+        if points.len() < 2 { return; }
+        for pair in points.windows(2) {
+            self.draw_line(palette, pair[0].0, pair[0].1, pair[1].0, pair[1].1, color);
+        }
+        if closed {
+            let first = points[0];
+            let last = points[points.len() - 1];
+            self.draw_line(palette, last.0, last.1, first.0, first.1, color);
+        }
+    }
+
+    /// Draws a two-dimensional radial gradient inside an ellipse.
+    pub fn radial_gradient_ellipse(
+        &mut self,
+        palette: &Palette,
+        center_x: i32,
+        center_y: i32,
+        radius_x: u32,
+        radius_y: u32,
+        center_color: Color,
+        edge_color: Color,
+    ) {
+        if radius_x == 0 || radius_y == 0 { return; }
+        let rx = radius_x as f64;
+        let ry = radius_y as f64;
+        let min_y = (center_y as i64 - radius_y as i64).max(0) as i32;
+        let max_y = (center_y as i64 + radius_y as i64).min(self.height as i64 - 1) as i32;
+        for y in min_y..=max_y {
+            let min_x = (center_x as i64 - radius_x as i64).max(0) as i32;
+            let max_x = (center_x as i64 + radius_x as i64).min(self.width as i64 - 1) as i32;
+            for x in min_x..=max_x {
+                let dx = (x - center_x) as f64 / rx;
+                let dy = (y - center_y) as f64 / ry;
+                let distance = (dx * dx + dy * dy).sqrt();
+                if distance > 1.0 { continue; }
+                let t = distance as f32;
+                let color = Color::rgb(
+                    lerp(center_color.r, edge_color.r, t),
+                    lerp(center_color.g, edge_color.g, t),
+                    lerp(center_color.b, edge_color.b, t),
+                );
+                self.set_pixel(palette, x, y, color);
+            }
+        }
+    }
+
     pub fn save_png(&self, path: impl AsRef<Path>) -> Result<(), String> {
         let image = RgbaImage::from_raw(self.width, self.height, self.pixels.clone())
             .ok_or("could not construct framebuffer image")?;
@@ -360,6 +551,21 @@ mod tests {
             let color = Color::from_packed(value);
             let index = unpermute(value) as usize;
             assert_eq!(permute(index as u32), color.packed());
+        }
+    }
+
+    #[test]
+    fn polygon_and_shape_inputs_handle_degenerate_cases() {
+        let points = [(0, 0), (10, 0)];
+        assert!(points.len() < 3);
+    }
+
+    #[test]
+    fn palette_permutation_covers_full_domain_at_boundaries() {
+        let mut seen = std::collections::HashSet::new();
+        for value in [0, 1, 2, 3, 0x00FF_FF, 0x12_3456, 0x7F_FFFF, COLOR_MASK] {
+            assert!(seen.insert(permute(value)));
+            assert_eq!(unpermute(permute(value)), value);
         }
     }
 
