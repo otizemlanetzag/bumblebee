@@ -171,6 +171,119 @@ impl Palette {
     }
 }
 
+/// Commands for a compact vector path. Coordinates are in framebuffer pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PathCommand {
+    MoveTo(f32, f32),
+    LineTo(f32, f32),
+    QuadraticTo { control: (f32, f32), end: (f32, f32), segments: u32 },
+    CubicTo {
+        control1: (f32, f32),
+        control2: (f32, f32),
+        end: (f32, f32),
+        segments: u32,
+    },
+    Close,
+}
+
+/// A vector path that can be flattened into points before rasterization.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VectorPath {
+    commands: Vec<PathCommand>,
+}
+
+impl VectorPath {
+    pub fn new() -> Self { Self::default() }
+    pub fn move_to(&mut self, x: f32, y: f32) -> &mut Self {
+        self.commands.push(PathCommand::MoveTo(x, y));
+        self
+    }
+    pub fn line_to(&mut self, x: f32, y: f32) -> &mut Self {
+        self.commands.push(PathCommand::LineTo(x, y));
+        self
+    }
+    pub fn quadratic_to(&mut self, control: (f32, f32), end: (f32, f32), segments: u32) -> &mut Self {
+        self.commands.push(PathCommand::QuadraticTo { control, end, segments });
+        self
+    }
+    pub fn cubic_to(
+        &mut self,
+        control1: (f32, f32),
+        control2: (f32, f32),
+        end: (f32, f32),
+        segments: u32,
+    ) -> &mut Self {
+        self.commands.push(PathCommand::CubicTo { control1, control2, end, segments });
+        self
+    }
+    pub fn close(&mut self) -> &mut Self {
+        self.commands.push(PathCommand::Close);
+        self
+    }
+
+    /// Converts curves to line segments. A new MoveTo starts a new subpath.
+    pub fn flatten(&self) -> Vec<Vec<(i32, i32)>> {
+        let mut paths: Vec<Vec<(i32, i32)>> = Vec::new();
+        let mut current: Option<(f32, f32)> = None;
+        let mut start: Option<(f32, f32)> = None;
+
+        for command in &self.commands {
+            match *command {
+                PathCommand::MoveTo(x, y) => {
+                    paths.push(vec![(x.round() as i32, y.round() as i32)]);
+                    current = Some((x, y));
+                    start = Some((x, y));
+                }
+                PathCommand::LineTo(x, y) => {
+                    if let (Some(point), Some(path)) = (current, paths.last_mut()) {
+                        path.push((x.round() as i32, y.round() as i32));
+                        current = Some((x, y));
+                        let _ = point;
+                    }
+                }
+                PathCommand::QuadraticTo { control, end, segments } => {
+                    if let (Some(from), Some(path)) = (current, paths.last_mut()) {
+                        let steps = segments.clamp(2, 4096);
+                        for step in 1..=steps {
+                            let t = step as f32 / steps as f32;
+                            let u = 1.0 - t;
+                            let point = (
+                                u*u*from.0 + 2.0*u*t*control.0 + t*t*end.0,
+                                u*u*from.1 + 2.0*u*t*control.1 + t*t*end.1,
+                            );
+                            path.push((point.0.round() as i32, point.1.round() as i32));
+                        }
+                        current = Some(end);
+                    }
+                }
+                PathCommand::CubicTo { control1, control2, end, segments } => {
+                    if let (Some(from), Some(path)) = (current, paths.last_mut()) {
+                        let steps = segments.clamp(2, 4096);
+                        for step in 1..=steps {
+                            let t = step as f32 / steps as f32;
+                            let u = 1.0 - t;
+                            let point = (
+                                u*u*u*from.0 + 3.0*u*u*t*control1.0 + 3.0*u*t*t*control2.0 + t*t*t*end.0,
+                                u*u*u*from.1 + 3.0*u*u*t*control1.1 + 3.0*u*t*t*control2.1 + t*t*t*end.1,
+                            );
+                            path.push((point.0.round() as i32, point.1.round() as i32));
+                        }
+                        current = Some(end);
+                    }
+                }
+                PathCommand::Close => {
+                    if let (Some(first), Some(path)) = (start, paths.last_mut()) {
+                        path.push((first.0.round() as i32, first.1.round() as i32));
+                        current = Some(first);
+                    }
+                }
+            }
+        }
+        paths.retain(|path| !path.is_empty());
+        paths
+    }
+}
+
 pub struct Framebuffer {
     width: u32,
     height: u32,
@@ -632,6 +745,22 @@ impl Framebuffer {
                 self.set_pixel(palette, x, y, color);
             }
         }
+    }
+
+    /// Strokes every subpath in a vector path.
+    pub fn stroke_path(&mut self, palette: &Palette, path: &VectorPath, color: Color) {
+        for subpath in path.flatten() {
+            self.draw_polyline(palette, &subpath, false, color);
+        }
+    }
+
+    /// Fills the flattened subpaths using the even-odd rule.
+    pub fn fill_path(&mut self, palette: &Palette, path: &VectorPath, color: Color) {
+        let subpaths = path.flatten();
+        if subpaths.is_empty() { return; }
+        // Combine contours so nested contours can form holes under even-odd filling.
+        let points: Vec<(i32, i32)> = subpaths.into_iter().flatten().collect();
+        self.fill_polygon(palette, &points, color);
     }
 
     pub fn save_png(&self, path: impl AsRef<Path>) -> Result<(), String> {
