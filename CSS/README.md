@@ -29,6 +29,7 @@ frame.clear(&palette, Color::WHITE);
 
 - Individual pixels and alpha blending
 - Independent off-screen layers with visibility toggles and opacity
+- Bounded render cache for reusable framebuffer snapshots, with explicit invalidation and oldest-first memory-budget eviction
 - Source-over alpha compositing of transparent layers into a target framebuffer
 - Transparent framebuffer clearing for layer construction
 - Filled rectangles and rectangle borders
