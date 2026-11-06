@@ -1498,6 +1498,95 @@ impl TiledSurface {
         }
     }
 
+
+    /// Draws a Bresenham line. Only tiles crossed by the line are allocated.
+    pub fn draw_line(
+        &mut self,
+        palette: &Palette,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        color: Color,
+    ) {
+        let (mut x, mut y) = (x0 as i64, y0 as i64);
+        let end_x = x1 as i64;
+        let end_y = y1 as i64;
+        let dx = (end_x - x).abs();
+        let sx = if x < end_x { 1 } else { -1 };
+        let dy = -(end_y - y).abs();
+        let sy = if y < end_y { 1 } else { -1 };
+        let mut error = dx + dy;
+        loop {
+            if x >= 0 && y >= 0 && x < self.width as i64 && y < self.height as i64 {
+                self.set_pixel(palette, x as i32, y as i32, color);
+            }
+            if x == end_x && y == end_y { break; }
+            let twice = 2 * error;
+            if twice >= dy { error += dy; x += sx; }
+            if twice <= dx { error += dx; y += sy; }
+        }
+    }
+
+    /// Fills a circle using horizontal spans, allocating only intersected tiles.
+    pub fn fill_circle(
+        &mut self,
+        palette: &Palette,
+        center_x: i32,
+        center_y: i32,
+        radius: u32,
+        color: Color,
+    ) {
+        let radius = radius as i64;
+        let radius_squared = radius.saturating_mul(radius);
+        let top = (center_y as i64 - radius).max(0);
+        let bottom = (center_y as i64 + radius).min(self.height as i64 - 1);
+        if top > bottom { return; }
+
+        for y in top..=bottom {
+            let dy = y - center_y as i64;
+            let remaining = radius_squared.saturating_sub(dy.saturating_mul(dy));
+            let span = (remaining as f64).sqrt() as i64;
+            let left = center_x as i64 - span;
+            let right = center_x as i64 + span;
+            let clipped_left = left.max(0);
+            let clipped_right = right.min(self.width as i64 - 1);
+            if clipped_left <= clipped_right {
+                self.fill_rect(
+                    palette,
+                    clipped_left as i32,
+                    y as i32,
+                    (clipped_right - clipped_left + 1) as u32,
+                    1,
+                    color,
+                );
+            }
+        }
+    }
+
+    /// Draws the outline of a rectangle without allocating tiles outside its edges.
+    pub fn stroke_rect(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        thickness: u32,
+        color: Color,
+    ) {
+        if width == 0 || height == 0 || thickness == 0 { return; }
+        let t = thickness.min(width).min(height);
+        self.fill_rect(palette, x, y, width, t, color);
+        if height > t {
+            self.fill_rect(palette, x, (y as i64 + height as i64 - t as i64) as i32, width, t, color);
+        }
+        self.fill_rect(palette, x, y, t, height, color);
+        if width > t {
+            self.fill_rect(palette, (x as i64 + width as i64 - t as i64) as i32, y, t, height, color);
+        }
+    }
+
     pub fn clear_tiles(&mut self) { self.tiles.clear(); }
 }
 
@@ -1946,6 +2035,33 @@ mod tests {
         assert_eq!(surface.pixel_rgba(69, 69), Some([1, 2, 3, 255]));
         assert_eq!(surface.pixel_rgba(59, 60), None);
         assert_eq!(surface.allocated_tiles(), 4);
+    }
+
+    #[test]
+    fn tiled_surface_draws_lines_across_tiles() {
+        let color = Color::rgb(21, 22, 23);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(256, 128, 32).unwrap();
+        surface.draw_line(&palette, 1, 1, 100, 70, color);
+        assert_eq!(surface.pixel_rgba(1, 1), Some([21, 22, 23, 255]));
+        assert_eq!(surface.pixel_rgba(100, 70), Some([21, 22, 23, 255]));
+        assert!(surface.allocated_tiles() > 1);
+        assert!(surface.allocated_tiles() < 12);
+    }
+
+    #[test]
+    fn tiled_surface_fills_circle_and_strokes_rectangle() {
+        let circle = Color::rgb(31, 32, 33);
+        let border = Color::rgb(41, 42, 43);
+        let palette = test_palette(&[circle, border]);
+        let mut surface = TiledSurface::with_tile_size(128, 128, 32).unwrap();
+        surface.fill_circle(&palette, 40, 40, 8, circle);
+        assert_eq!(surface.pixel_rgba(40, 40), Some([31, 32, 33, 255]));
+        assert_eq!(surface.pixel_rgba(32, 40), Some([31, 32, 33, 255]));
+        assert_eq!(surface.pixel_rgba(31, 40), None);
+        surface.stroke_rect(&palette, 70, 70, 20, 15, 2, border);
+        assert_eq!(surface.pixel_rgba(70, 70), Some([41, 42, 43, 255]));
+        assert_eq!(surface.pixel_rgba(75, 75), None);
     }
 
     #[test]
