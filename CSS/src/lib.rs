@@ -1145,6 +1145,108 @@ impl Framebuffer {
 }
 
 
+/// A scrollable, scalable window onto a larger framebuffer.
+///
+/// Scroll offsets are measured in source pixels. Scale is the number of
+/// destination pixels per source pixel. Sampling uses nearest-neighbor
+/// filtering; pixels outside the source are made transparent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Viewport {
+    width: u32,
+    height: u32,
+    scroll_x: f32,
+    scroll_y: f32,
+    scale: f32,
+}
+
+impl Viewport {
+    pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        if width == 0 || height == 0 {
+            return Err("viewport dimensions must be greater than zero".into());
+        }
+        Ok(Self { width, height, scroll_x: 0.0, scroll_y: 0.0, scale: 1.0 })
+    }
+
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
+    pub fn scroll(&self) -> (f32, f32) { (self.scroll_x, self.scroll_y) }
+    pub fn scale(&self) -> f32 { self.scale }
+
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
+        if width == 0 || height == 0 {
+            return Err("viewport dimensions must be greater than zero".into());
+        }
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
+    pub fn set_scroll(&mut self, x: f32, y: f32) -> Result<(), String> {
+        if !x.is_finite() || !y.is_finite() {
+            return Err("viewport scroll offsets must be finite".into());
+        }
+        self.scroll_x = x;
+        self.scroll_y = y;
+        Ok(())
+    }
+
+    pub fn set_scale(&mut self, scale: f32) -> Result<(), String> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err("viewport scale must be finite and greater than zero".into());
+        }
+        self.scale = scale;
+        Ok(())
+    }
+
+    /// Draws the visible source area at (destination_x, destination_y).
+    /// Only the viewport bounds and destination's active clip are modified.
+    /// Source pixels are read without consuming its dirty-region information.
+    pub fn render_into(
+        &self,
+        source: &Framebuffer,
+        target: &mut Framebuffer,
+        destination_x: i32,
+        destination_y: i32,
+    ) -> Result<(), String> {
+        let left = (destination_x as i64).max(0).max(
+            target.clip.map_or(0, |clip| clip.0 as i64)
+        );
+        let top = (destination_y as i64).max(0).max(
+            target.clip.map_or(0, |clip| clip.1 as i64)
+        );
+        let right = (destination_x as i64 + self.width as i64)
+            .min(target.width as i64)
+            .min(target.clip.map_or(target.width, |clip| clip.2) as i64);
+        let bottom = (destination_y as i64 + self.height as i64)
+            .min(target.height as i64)
+            .min(target.clip.map_or(target.height, |clip| clip.3) as i64);
+
+        if left >= right || top >= bottom { return Ok(()); }
+
+        for dy in top..bottom {
+            let local_y = (dy - destination_y as i64) as f32;
+            let source_y = (self.scroll_y + local_y / self.scale).floor();
+            for dx in left..right {
+                let local_x = (dx - destination_x as i64) as f32;
+                let source_x = (self.scroll_x + local_x / self.scale).floor();
+                let target_offset = target.offset(dx as u32, dy as u32);
+                if source_x >= 0.0 && source_y >= 0.0
+                    && source_x < source.width as f32 && source_y < source.height as f32
+                {
+                    let source_offset = source.offset(source_x as u32, source_y as u32);
+                    target.pixels[target_offset..target_offset + 4]
+                        .copy_from_slice(&source.pixels[source_offset..source_offset + 4]);
+                } else {
+                    target.pixels[target_offset..target_offset + 4].fill(0);
+                }
+            }
+        }
+
+        target.mark_dirty_region(left as i32, top as i32, (right - left) as u32, (bottom - top) as u32);
+        Ok(())
+    }
+}
+
 /// A bounded cache of completed framebuffer renders.
 ///
 /// The caller supplies a stable key derived from the element's content and
