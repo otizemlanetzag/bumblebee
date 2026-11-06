@@ -1406,6 +1406,11 @@ impl LayerStack {
             layer.composite_into(target)?;
         }
         target.clip = previous_clip;
+        // The stack owns these layer surfaces; consume their pending changes
+        // after incorporating them into the composed scene.
+        for layer in &mut self.layers {
+            layer.framebuffer_mut().take_dirty_regions();
+        }
         self.full_rebuild = false;
         Ok(())
     }
@@ -1438,6 +1443,9 @@ impl LayerStack {
             }
             target.restore_clip();
             redrawn += 1;
+        }
+        for layer in &mut self.layers {
+            layer.framebuffer_mut().take_dirty_regions();
         }
         Ok(redrawn)
     }
@@ -1634,6 +1642,7 @@ mod tests {
         assert_eq!(stack.composite_dirty_into(&mut target).unwrap(), 1);
         assert_eq!(&target.pixels[4..8], &[0, 255, 0, 255]);
         assert_eq!(&target.pixels[0..4], &[0, 0, 255, 255]);
+        assert_eq!(stack.composite_dirty_into(&mut target).unwrap(), 0);
     }
 
     #[test]
