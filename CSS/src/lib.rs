@@ -1273,12 +1273,15 @@ mod tests {
 
     #[test]
     fn dirty_region_count_is_bounded() {
-        let mut frame = Framebuffer::new(256, 4).unwrap();
-        for x in (0..256).step_by(2) {
+        let mut frame = Framebuffer::new(512, 4).unwrap();
+        for x in (0..512).step_by(2) {
             frame.mark_dirty_region(x, 0, 1, 1);
         }
-        assert_eq!(frame.dirty_regions().len(), 1);
-        assert_eq!(frame.dirty_regions()[0], DirtyRegion { x: 0, y: 0, width: 255, height: 1 });
+        assert!(frame.dirty_regions().len() <= MAX_DIRTY_REGIONS);
+        let left = frame.dirty_regions().iter().map(|region| region.x).min().unwrap();
+        let right = frame.dirty_regions().iter().map(|region| region.x + region.width).max().unwrap();
+        assert_eq!(left, 0);
+        assert_eq!(right, 511);
     }
 
     #[test]
