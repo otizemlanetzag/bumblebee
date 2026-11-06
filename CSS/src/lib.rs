@@ -366,6 +366,59 @@ impl VectorPath {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+fn merge_dirty_region(
+    regions: &mut Vec<DirtyRegion>,
+    bounds_width: u32,
+    bounds_height: u32,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) {
+    if width == 0 || height == 0 { return; }
+    let left = (x as i64).max(0).min(bounds_width as i64) as u32;
+    let top = (y as i64).max(0).min(bounds_height as i64) as u32;
+    let right = (x as i64 + width as i64).max(0).min(bounds_width as i64) as u32;
+    let bottom = (y as i64 + height as i64).max(0).min(bounds_height as i64) as u32;
+    if left >= right || top >= bottom { return; }
+
+    let mut merged = DirtyRegion { x: left, y: top, width: right-left, height: bottom-top };
+    let mut index = 0;
+    while index < regions.len() {
+        let old = regions[index];
+        let old_right = old.x + old.width;
+        let old_bottom = old.y + old.height;
+        let new_right = merged.x + merged.width;
+        let new_bottom = merged.y + merged.height;
+        let separated = old_right < merged.x || new_right < old.x
+            || old_bottom < merged.y || new_bottom < old.y;
+        if separated {
+            index += 1;
+            continue;
+        }
+        let nx = old.x.min(merged.x);
+        let ny = old.y.min(merged.y);
+        let nr = old_right.max(new_right);
+        let nb = old_bottom.max(new_bottom);
+        merged = DirtyRegion { x: nx, y: ny, width: nr-nx, height: nb-ny };
+        regions.swap_remove(index);
+        index = 0;
+    }
+    regions.push(merged);
+    if regions.len() > MAX_DIRTY_REGIONS {
+        let mut bounds = regions[0];
+        for region in regions.iter().skip(1) {
+            let right = (bounds.x + bounds.width).max(region.x + region.width);
+            let bottom = (bounds.y + bounds.height).max(region.y + region.height);
+            let left = bounds.x.min(region.x);
+            let top = bounds.y.min(region.y);
+            bounds = DirtyRegion { x: left, y: top, width: right-left, height: bottom-top };
+        }
+        regions.clear();
+        regions.push(bounds);
+    }
+}
+
 pub struct DirtyRegion {
     pub x: u32,
     pub y: u32,
@@ -1289,7 +1342,9 @@ impl ViewportRenderer {
             viewport.render_into(source, target, destination_x, destination_y)?;
             1
         } else {
-            let mut regions = Framebuffer::new(viewport.width, viewport.height)?;
+            // Collect mapped rectangles directly: allocating a viewport-sized
+            // framebuffer here would waste width * height * 4 bytes per update.
+            let mut regions: Vec<DirtyRegion> = Vec::new();
             for dirty in source.dirty_regions() {
                 let local_left = ((dirty.x as f32 - viewport.scroll_x) * viewport.scale).ceil();
                 let local_top = ((dirty.y as f32 - viewport.scroll_y) * viewport.scale).ceil();
@@ -1305,11 +1360,19 @@ impl ViewportRenderer {
                 let right = (local_right as i64).clamp(0, viewport.width as i64);
                 let bottom = (local_bottom as i64).clamp(0, viewport.height as i64);
                 if left < right && top < bottom {
-                    regions.mark_dirty_region(left as i32, top as i32, (right-left) as u32, (bottom-top) as u32);
+                    merge_dirty_region(
+                        &mut regions,
+                        viewport.width,
+                        viewport.height,
+                        left as i32,
+                        top as i32,
+                        (right-left) as u32,
+                        (bottom-top) as u32,
+                    );
                 }
             }
 
-            let changed = regions.take_dirty_regions();
+            let changed = regions;
             for region in &changed {
                 target.save_clip();
                 target.intersect_clip(
