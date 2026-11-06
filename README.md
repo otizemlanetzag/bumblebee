@@ -1,3 +1,4 @@
+![logo](logo.png)
 # Bumblebee
 
 Bumblebee is an original browser-engine project written in Rust. Its goal is a modular, memory-conscious implementation with broad web compatibility, developed without copying Chromium source code.
