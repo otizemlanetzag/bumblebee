@@ -1245,6 +1245,50 @@ impl Layer {
     pub fn set_visible(&mut self, visible: bool) { self.visible = visible; }
     pub fn is_visible(&self) -> bool { self.visible }
 
+    /// Composites only pending dirty rectangles from this layer.
+    ///
+    /// The source dirty list is preserved for other consumers. Keep visibility
+    /// and opacity stable while using this method; after changing either,
+    /// rebuild the full scene because old composited pixels cannot be undone.
+    pub fn composite_dirty_into(&self, target: &mut Framebuffer) -> Result<usize, String> {
+        if self.framebuffer.width != target.width || self.framebuffer.height != target.height {
+            return Err("layer and target framebuffer dimensions must match".into());
+        }
+        if !self.visible || self.opacity == 0 { return Ok(0); }
+        let regions = self.framebuffer.dirty_regions.clone();
+        let opacity = self.opacity as u32;
+        let mut count = 0;
+        for region in regions {
+            let x0 = region.x.min(self.framebuffer.width);
+            let y0 = region.y.min(self.framebuffer.height);
+            let x1 = region.x.saturating_add(region.width).min(self.framebuffer.width);
+            let y1 = region.y.saturating_add(region.height).min(self.framebuffer.height);
+            let mut changed = false;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    if !target.in_bounds(x as i32, y as i32) { continue; }
+                    let so = self.framebuffer.offset(x, y);
+                    let alpha = (self.framebuffer.pixels[so + 3] as u32 * opacity + 127) / 255;
+                    if alpha == 0 { continue; }
+                    let to = target.offset(x, y);
+                    let da = target.pixels[to + 3] as u32;
+                    let out_a = alpha + (da * (255 - alpha) + 127) / 255;
+                    if out_a == 0 { continue; }
+                    for c in 0..3 {
+                        let src = self.framebuffer.pixels[so + c] as u32;
+                        let dst = target.pixels[to + c] as u32;
+                        let premul = src * alpha + (dst * da * (255 - alpha) + 127) / 255;
+                        target.pixels[to + c] = ((premul + out_a / 2) / out_a).min(255) as u8;
+                    }
+                    target.pixels[to + 3] = out_a.min(255) as u8;
+                    target.mark_dirty_region(x as i32, y as i32, 1, 1);
+                    changed = true;
+                }
+            }
+            if changed { count += 1; }
+        }
+        Ok(count)
+    }
     /// Composites this layer over a target framebuffer using source-over alpha.
     /// The target's active clipping rectangle is respected.
     pub fn composite_into(&self, target: &mut Framebuffer) -> Result<(), String> {
@@ -1416,6 +1460,34 @@ mod tests {
         assert_eq!(target.pixels, before);
     }
 
+    #[test]
+    fn layer_dirty_compositing_updates_only_marked_regions() {
+        let mut layer = Layer::new(3, 1).unwrap();
+        let mut target = Framebuffer::new(3, 1).unwrap();
+        layer.framebuffer_mut().pixels[0..4].copy_from_slice(&[255, 0, 0, 255]);
+        layer.framebuffer_mut().pixels[8..12].copy_from_slice(&[0, 255, 0, 255]);
+        layer.framebuffer_mut().mark_dirty_region(0, 0, 1, 1);
+        layer.framebuffer_mut().mark_dirty_region(2, 0, 1, 1);
+        assert_eq!(layer.composite_dirty_into(&mut target).unwrap(), 2);
+        assert_eq!(&target.pixels[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&target.pixels[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&target.pixels[8..12], &[0, 255, 0, 255]);
+        assert_eq!(layer.framebuffer().dirty_regions().len(), 2);
+    }
+
+    #[test]
+    fn dirty_layer_compositing_skips_invisible_and_transparent_layers() {
+        let mut layer = Layer::new(1, 1).unwrap();
+        layer.framebuffer_mut().pixels.copy_from_slice(&[255, 0, 0, 255]);
+        layer.framebuffer_mut().mark_dirty_region(0, 0, 1, 1);
+        let mut target = Framebuffer::new(1, 1).unwrap();
+        layer.set_visible(false);
+        assert_eq!(layer.composite_dirty_into(&mut target).unwrap(), 0);
+        layer.set_visible(true);
+        layer.set_opacity(0);
+        assert_eq!(layer.composite_dirty_into(&mut target).unwrap(), 0);
+        assert_eq!(target.pixels, vec![0, 0, 0, 0]);
+    }
     #[test]
     fn layer_rejects_different_framebuffer_dimensions() {
         let layer = Layer::new(2, 2).unwrap();
