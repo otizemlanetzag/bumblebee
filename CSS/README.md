@@ -32,6 +32,7 @@ frame.clear(&palette, Color::WHITE);
 - Incremental framebuffer synchronization with `copy_dirty_from()`, which copies only changed rectangles, respects the destination clip, and leaves source dirty state intact for multiple consumers
 - Independent off-screen layers with visibility toggles and opacity
 - Bounded render cache for reusable framebuffer snapshots, with explicit invalidation and oldest-first memory-budget eviction
+- Incremental layer compositing with `composite_dirty_into()`, which scans only pending source dirty regions and preserves them for multiple targets; perform a full scene recomposition after changing layer visibility or opacity
 - Source-over alpha compositing of transparent layers into a target framebuffer
 - Transparent framebuffer clearing for layer construction
 - Filled rectangles and rectangle borders
