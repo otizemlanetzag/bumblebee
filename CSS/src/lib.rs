@@ -171,6 +171,56 @@ impl Palette {
     }
 }
 
+/// A 2D affine transform using the standard six CSS/SVG matrix values.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transform2D {
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+    pub d: f32,
+    pub e: f32,
+    pub f: f32,
+}
+
+impl Default for Transform2D {
+    fn default() -> Self { Self::IDENTITY }
+}
+
+impl Transform2D {
+    pub const IDENTITY: Self = Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 };
+
+    pub const fn new(a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) -> Self {
+        Self { a, b, c, d, e, f }
+    }
+
+    pub fn translation(x: f32, y: f32) -> Self { Self::new(1.0, 0.0, 0.0, 1.0, x, y) }
+    pub fn scale(x: f32, y: f32) -> Self { Self::new(x, 0.0, 0.0, y, 0.0, 0.0) }
+
+    pub fn rotation_radians(angle: f32) -> Self {
+        let (sin, cos) = angle.sin_cos();
+        Self::new(cos, sin, -sin, cos, 0.0, 0.0)
+    }
+
+    /// Returns self multiplied by rhs; rhs is applied to points first.
+    pub fn multiply(self, rhs: Self) -> Self {
+        Self::new(
+            self.a * rhs.a + self.c * rhs.b,
+            self.b * rhs.a + self.d * rhs.b,
+            self.a * rhs.c + self.c * rhs.d,
+            self.b * rhs.c + self.d * rhs.d,
+            self.a * rhs.e + self.c * rhs.f + self.e,
+            self.b * rhs.e + self.d * rhs.f + self.f,
+        )
+    }
+
+    pub fn apply(self, point: (f32, f32)) -> (f32, f32) {
+        (
+            self.a * point.0 + self.c * point.1 + self.e,
+            self.b * point.0 + self.d * point.1 + self.f,
+        )
+    }
+}
+
 /// Commands for a compact vector path. Coordinates are in framebuffer pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PathCommand {
@@ -222,6 +272,36 @@ impl VectorPath {
     }
 
     /// Converts curves to line segments. A new MoveTo starts a new subpath.
+    /// Applies an affine transform to every coordinate in the path.
+    pub fn transformed(&self, transform: Transform2D) -> Self {
+        let mut result = Self::new();
+        for command in &self.commands {
+            match *command {
+                PathCommand::MoveTo(x, y) => {
+                    let p = transform.apply((x, y));
+                    result.move_to(p.0, p.1);
+                }
+                PathCommand::LineTo(x, y) => {
+                    let p = transform.apply((x, y));
+                    result.line_to(p.0, p.1);
+                }
+                PathCommand::QuadraticTo { control, end, segments } => {
+                    result.quadratic_to(transform.apply(control), transform.apply(end), segments);
+                }
+                PathCommand::CubicTo { control1, control2, end, segments } => {
+                    result.cubic_to(
+                        transform.apply(control1),
+                        transform.apply(control2),
+                        transform.apply(end),
+                        segments,
+                    );
+                }
+                PathCommand::Close => { result.close(); }
+            }
+        }
+        result
+    }
+
     pub fn flatten(&self) -> Vec<Vec<(i32, i32)>> {
         let mut paths: Vec<Vec<(i32, i32)>> = Vec::new();
         let mut current: Option<(f32, f32)> = None;
@@ -745,6 +825,28 @@ impl Framebuffer {
                 self.set_pixel(palette, x, y, color);
             }
         }
+    }
+
+    /// Strokes a path after applying an affine transform.
+    pub fn stroke_transformed_path(
+        &mut self,
+        palette: &Palette,
+        path: &VectorPath,
+        transform: Transform2D,
+        color: Color,
+    ) {
+        self.stroke_path(palette, &path.transformed(transform), color);
+    }
+
+    /// Fills a path after applying an affine transform.
+    pub fn fill_transformed_path(
+        &mut self,
+        palette: &Palette,
+        path: &VectorPath,
+        transform: Transform2D,
+        color: Color,
+    ) {
+        self.fill_path(palette, &path.transformed(transform), color);
     }
 
     /// Strokes every subpath in a vector path.
