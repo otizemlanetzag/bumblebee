@@ -754,13 +754,43 @@ impl Framebuffer {
         }
     }
 
-    /// Fills the flattened subpaths using the even-odd rule.
+    /// Fills all flattened contours together using the even-odd rule.
+    /// Separate contours remain separate, allowing nested contours to create holes.
     pub fn fill_path(&mut self, palette: &Palette, path: &VectorPath, color: Color) {
-        let subpaths = path.flatten();
-        if subpaths.is_empty() { return; }
-        // Combine contours so nested contours can form holes under even-odd filling.
-        let points: Vec<(i32, i32)> = subpaths.into_iter().flatten().collect();
-        self.fill_polygon(palette, &points, color);
+        let contours = path.flatten();
+        if contours.is_empty() { return; }
+        let min_y = contours.iter().flat_map(|p| p.iter().map(|v| v.1)).min().unwrap().max(0);
+        let max_y = contours.iter().flat_map(|p| p.iter().map(|v| v.1)).max().unwrap().min(self.height as i32 - 1);
+        if min_y > max_y { return; }
+        let c = palette.sample(color);
+        let mut intersections = Vec::<f64>::new();
+
+        for y in min_y..=max_y {
+            intersections.clear();
+            let scan_y = y as f64 + 0.5;
+            for contour in &contours {
+                if contour.len() < 2 { continue; }
+                for index in 0..contour.len() {
+                    let (x1, y1) = contour[index];
+                    let (x2, y2) = contour[(index + 1) % contour.len()];
+                    if y1 == y2 { continue; }
+                    let low = y1.min(y2) as f64;
+                    let high = y1.max(y2) as f64;
+                    if scan_y < low || scan_y >= high { continue; }
+                    let t = (scan_y - y1 as f64) / (y2 - y1) as f64;
+                    intersections.push(x1 as f64 + t * (x2 - x1) as f64);
+                }
+            }
+            intersections.sort_by(|a, b| a.total_cmp(b));
+            for pair in intersections.chunks_exact(2) {
+                let left = (pair[0].ceil() as i64).max(0);
+                let right = (pair[1].ceil() as i64).min(self.width as i64);
+                for px in left..right {
+                    let offset = self.offset(px as u32, y as u32);
+                    self.pixels[offset..offset + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+                }
+            }
+        }
     }
 
     pub fn save_png(&self, path: impl AsRef<Path>) -> Result<(), String> {
