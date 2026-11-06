@@ -1589,6 +1589,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn viewport_scrolls_over_a_larger_source() {
+        let mut source = Framebuffer::new(4, 2).unwrap();
+        for x in 0..4 {
+            let offset = source.offset(x, 0);
+            source.pixels[offset..offset + 4].copy_from_slice(&[(x * 50) as u8, 0, 0, 255]);
+        }
+        let mut viewport = Viewport::new(2, 1).unwrap();
+        viewport.set_scroll(1.0, 0.0).unwrap();
+        let mut target = Framebuffer::new(2, 1).unwrap();
+        viewport.render_into(&source, &mut target, 0, 0).unwrap();
+        assert_eq!(&target.pixels[0..4], &[50, 0, 0, 255]);
+        assert_eq!(&target.pixels[4..8], &[100, 0, 0, 255]);
+    }
+
+    #[test]
+    fn viewport_scales_with_nearest_neighbor_sampling() {
+        let mut source = Framebuffer::new(2, 1).unwrap();
+        source.pixels[0..4].copy_from_slice(&[10, 0, 0, 255]);
+        source.pixels[4..8].copy_from_slice(&[20, 0, 0, 255]);
+        let mut viewport = Viewport::new(4, 1).unwrap();
+        viewport.set_scale(2.0).unwrap();
+        let mut target = Framebuffer::new(4, 1).unwrap();
+        viewport.render_into(&source, &mut target, 0, 0).unwrap();
+        assert_eq!(&target.pixels, &[10, 0, 0, 255, 10, 0, 0, 255, 20, 0, 0, 255, 20, 0, 0, 255]);
+    }
+
+    #[test]
+    fn viewport_respects_destination_clip_and_clears_outside_source() {
+        let mut source = Framebuffer::new(1, 1).unwrap();
+        source.pixels.copy_from_slice(&[1, 2, 3, 255]);
+        let viewport = Viewport::new(3, 2).unwrap();
+        let mut target = Framebuffer::new(4, 3).unwrap();
+        target.pixels.fill(99);
+        target.set_clip(1, 0, 2, 2);
+        viewport.render_into(&source, &mut target, 0, 0).unwrap();
+        assert_eq!(&target.pixels[target.offset(0, 0)..target.offset(0, 0) + 4], &[99; 4]);
+        assert_eq!(&target.pixels[target.offset(1, 0)..target.offset(1, 0) + 4], &[1, 2, 3, 255]);
+        assert_eq!(&target.pixels[target.offset(2, 0)..target.offset(2, 0) + 4], &[0; 4]);
+        assert_eq!(&target.pixels[target.offset(1, 2)..target.offset(1, 2) + 4], &[99; 4]);
+    }
+
+    #[test]
+    fn viewport_rejects_invalid_scale_and_non_finite_scroll() {
+        let mut viewport = Viewport::new(2, 2).unwrap();
+        assert!(viewport.set_scale(0.0).is_err());
+        assert!(viewport.set_scale(f32::INFINITY).is_err());
+        assert!(viewport.set_scroll(f32::NAN, 0.0).is_err());
+        assert!(Viewport::new(0, 2).is_err());
+    }
+
+    #[test]
     fn copy_dirty_from_copies_only_marked_pixels() {
         let mut source = Framebuffer::new(4, 3).unwrap();
         let mut target = Framebuffer::new(4, 3).unwrap();
