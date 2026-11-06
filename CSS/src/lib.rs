@@ -1676,6 +1676,68 @@ impl TiledSurface {
         }
     }
 
+    /// Composites allocated tiles over a framebuffer using source-over alpha.
+    /// Transparent pixels and unallocated tiles are skipped; destination clipping applies.
+    pub fn composite_into(
+        &self,
+        target: &mut Framebuffer,
+        destination_x: i32,
+        destination_y: i32,
+    ) -> Result<usize, String> {
+        let mut changed_pixels = 0usize;
+        for (&(tile_x, tile_y), tile) in &self.tiles {
+            let origin_x = tile_x as i64 * self.tile_size as i64 + destination_x as i64;
+            let origin_y = tile_y as i64 * self.tile_size as i64 + destination_y as i64;
+            for sy in 0..tile.height {
+                let dy = origin_y + sy as i64;
+                if dy < 0 || dy >= target.height as i64 { continue; }
+                for sx in 0..tile.width {
+                    let dx = origin_x + sx as i64;
+                    if dx < 0 || dx >= target.width as i64
+                        || !target.in_bounds(dx as i32, dy as i32) {
+                        continue;
+                    }
+                    let source_offset = tile.offset(sx, sy);
+                    let source_alpha = tile.pixels[source_offset + 3] as u32;
+                    if source_alpha == 0 { continue; }
+                    let target_offset = target.offset(dx as u32, dy as u32);
+                    let destination_alpha = target.pixels[target_offset + 3] as u32;
+                    let inverse = 255 - source_alpha;
+                    let output_alpha = source_alpha
+                        + (destination_alpha * inverse + 127) / 255;
+                    for channel in 0..3 {
+                        let source = tile.pixels[source_offset + channel] as u32;
+                        let destination = target.pixels[target_offset + channel] as u32;
+                        let premultiplied = source * source_alpha
+                            + (destination * destination_alpha * inverse + 127) / 255;
+                        target.pixels[target_offset + channel] =
+                            ((premultiplied + output_alpha / 2) / output_alpha)
+                                .min(255) as u8;
+                    }
+                    target.pixels[target_offset + 3] = output_alpha.min(255) as u8;
+                    changed_pixels += 1;
+                }
+            }
+        }
+        if changed_pixels > 0 {
+            // Mark the destination bounds of allocated tiles; this deliberately
+            // favors a small number of broad regions over per-pixel dirty entries.
+            for (&(tile_x, tile_y), tile) in &self.tiles {
+                let x = tile_x as i64 * self.tile_size as i64 + destination_x as i64;
+                let y = tile_y as i64 * self.tile_size as i64 + destination_y as i64;
+                let left = x.max(0).min(target.width as i64);
+                let top = y.max(0).min(target.height as i64);
+                let right = (x + tile.width as i64).max(0).min(target.width as i64);
+                let bottom = (y + tile.height as i64).max(0).min(target.height as i64);
+                if left < right && top < bottom {
+                    target.mark_dirty_region(left as i32, top as i32,
+                        (right - left) as u32, (bottom - top) as u32);
+                }
+            }
+        }
+        Ok(changed_pixels)
+    }
+
     pub fn clear_tiles(&mut self) { self.tiles.clear(); }
 }
 
@@ -2131,6 +2193,34 @@ mod tests {
         assert_eq!(pixel[1], 0);
         assert!(pixel[2] >= 127 && pixel[2] <= 128);
         assert_eq!(pixel[3], 255);
+    }
+
+    #[test]
+    fn tiled_surface_composites_sparse_tiles_with_alpha_and_offset() {
+        let palette = test_palette();
+        let mut surface = TiledSurface::with_tile_size(8, 8, 4).unwrap();
+        surface.blend_pixel(&palette, 1, 1, Color::rgb(255, 0, 0), 128).unwrap();
+        surface.try_set_pixel(&palette, 5, 2, Color::rgb(0, 255, 0)).unwrap();
+        let mut target = Framebuffer::new(10, 10).unwrap();
+        let changed = surface.composite_into(&mut target, 2, 3).unwrap();
+        assert_eq!(changed, 2);
+        let red = target.pixel_rgba(3, 4).unwrap();
+        assert_eq!(red, [255, 0, 0, 128]);
+        assert_eq!(target.pixel_rgba(7, 5), Some([0, 255, 0, 255]));
+        assert_eq!(target.pixel_rgba(0, 0), Some([0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn tiled_surface_composite_respects_target_clip() {
+        let palette = test_palette();
+        let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
+        surface.try_fill_rect(&palette, 0, 0, 4, 4, Color::WHITE).unwrap();
+        let mut target = Framebuffer::new(6, 6).unwrap();
+        target.set_clip(2, 2, 2, 2);
+        surface.composite_into(&mut target, 0, 0).unwrap();
+        assert_eq!(target.pixel_rgba(2, 2), Some([255, 255, 255, 255]));
+        assert_eq!(target.pixel_rgba(1, 1), Some([0, 0, 0, 0]));
+        assert_eq!(target.pixel_rgba(4, 4), Some([0, 0, 0, 0]));
     }
 
     #[test]
