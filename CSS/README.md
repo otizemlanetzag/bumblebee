@@ -29,6 +29,7 @@ frame.clear(&palette, Color::WHITE);
 
 - Individual pixels and alpha blending
 - Dirty-region tracking for pixel writes, alpha blends, all filled shape rasterizers, layer compositing, and full-frame clears; `take_dirty_regions()` returns and resets the pending rectangles
+- Incremental framebuffer synchronization with `copy_dirty_from()`, which copies only changed rectangles, respects the destination clip, and leaves source dirty state intact for multiple consumers
 - Independent off-screen layers with visibility toggles and opacity
 - Bounded render cache for reusable framebuffer snapshots, with explicit invalidation and oldest-first memory-budget eviction
 - Source-over alpha compositing of transparent layers into a target framebuffer
