@@ -1413,6 +1413,8 @@ pub struct TiledSurface {
     height: u32,
     tile_size: u32,
     tiles: std::collections::HashMap<(u32, u32), Framebuffer>,
+    // Dirty bounds retained when clear_tiles() removes the tiles that owned them.
+    pending_dirty_regions: Vec<DirtyRegion>,
 }
 
 impl TiledSurface {
@@ -1426,7 +1428,11 @@ impl TiledSurface {
         if width == 0 || height == 0 || tile_size == 0 {
             return Err("surface dimensions and tile size must be greater than zero".into());
         }
-        Ok(Self { width, height, tile_size, tiles: std::collections::HashMap::new() })
+        Ok(Self {
+            width, height, tile_size,
+            tiles: std::collections::HashMap::new(),
+            pending_dirty_regions: Vec::new(),
+        })
     }
 
     pub fn width(&self) -> u32 { self.width }
@@ -1440,7 +1446,7 @@ impl TiledSurface {
     /// Returns pending dirty rectangles in surface-wide coordinates.
     /// Rectangles remain tile-local only internally; callers receive global positions.
     pub fn dirty_regions(&self) -> Vec<DirtyRegion> {
-        let mut regions = Vec::new();
+        let mut regions = self.pending_dirty_regions.clone();
         for (&(tile_x, tile_y), tile) in &self.tiles {
             let origin_x = tile_x * self.tile_size;
             let origin_y = tile_y * self.tile_size;
@@ -1458,7 +1464,7 @@ impl TiledSurface {
 
     /// Returns and clears pending dirty rectangles in surface-wide coordinates.
     pub fn take_dirty_regions(&mut self) -> Vec<DirtyRegion> {
-        let mut regions = Vec::new();
+        let mut regions = std::mem::take(&mut self.pending_dirty_regions);
         for (&(tile_x, tile_y), tile) in self.tiles.iter_mut() {
             let origin_x = tile_x * self.tile_size;
             let origin_y = tile_y * self.tile_size;
@@ -1887,7 +1893,67 @@ impl TiledSurface {
         Ok(changed_pixels)
     }
 
-    pub fn clear_tiles(&mut self) { self.tiles.clear(); }
+    /// Rebuilds only changed destination rectangles from this surface.
+    ///
+    /// Each dirty rectangle is first cleared to transparent, then all current
+    /// tiles are replayed through that clip. This correctly removes old pixels
+    /// when a tile pixel becomes transparent or when clear_tiles() is called.
+    /// The destination rectangle is treated as owned by this surface; if other
+    /// layers share the target, they must be composited again afterwards.
+    /// Source dirty state is consumed only after every region is processed.
+    pub fn composite_dirty_into(
+        &mut self,
+        target: &mut Framebuffer,
+        destination_x: i32,
+        destination_y: i32,
+    ) -> Result<usize, String> {
+        let regions = self.dirty_regions();
+        if regions.is_empty() { return Ok(0); }
+
+        let mut processed = 0usize;
+        for region in &regions {
+            let left = region.x as i64 + destination_x as i64;
+            let top = region.y as i64 + destination_y as i64;
+            let right = left + region.width as i64;
+            let bottom = top + region.height as i64;
+            let clipped_left = left.max(0).min(target.width as i64);
+            let clipped_top = top.max(0).min(target.height as i64);
+            let clipped_right = right.max(0).min(target.width as i64);
+            let clipped_bottom = bottom.max(0).min(target.height as i64);
+            if clipped_left >= clipped_right || clipped_top >= clipped_bottom {
+                continue;
+            }
+
+            target.save_clip();
+            target.intersect_clip(
+                clipped_left as i32,
+                clipped_top as i32,
+                (clipped_right - clipped_left) as u32,
+                (clipped_bottom - clipped_top) as u32,
+            );
+            target.clear_transparent_in_clip();
+            let result = self.composite_into(target, destination_x, destination_y);
+            target.restore_clip();
+            result?;
+            processed += 1;
+        }
+
+        self.take_dirty_regions();
+        Ok(processed)
+    }
+
+    /// Frees all allocated tiles while retaining their old bounds as dirty.
+    /// A later incremental composite can therefore erase their previous pixels.
+    pub fn clear_tiles(&mut self) {
+        for (&(tile_x, tile_y), tile) in &self.tiles {
+            let x = tile_x * self.tile_size;
+            let y = tile_y * self.tile_size;
+            self.pending_dirty_regions.push(DirtyRegion {
+                x, y, width: tile.width, height: tile.height,
+            });
+        }
+        self.tiles.clear();
+    }
 }
 
 /// Reuses off-screen framebuffers to reduce repeated allocation churn.
