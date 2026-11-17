@@ -1574,6 +1574,40 @@ impl TiledSurface {
         Ok(())
     }
 
+    /// Clears a rectangle to transparent without allocating untouched tiles.
+    /// Existing tile pixels are zeroed and their changed areas are marked dirty.
+    pub fn clear_rect(&mut self, x: i32, y: i32, width: u32, height: u32) {
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
+        if left >= right || top >= bottom { return; }
+
+        for ty in (top / self.tile_size)..=((bottom - 1) / self.tile_size) {
+            for tx in (left / self.tile_size)..=((right - 1) / self.tile_size) {
+                let tile_left = tx * self.tile_size;
+                let tile_top = ty * self.tile_size;
+                let Some(tile) = self.tiles.get_mut(&(tx, ty)) else { continue; };
+                let local_left = left.max(tile_left) - tile_left;
+                let local_top = top.max(tile_top) - tile_top;
+                let local_right = right.min(tile_left + tile.width) - tile_left;
+                let local_bottom = bottom.min(tile_top + tile.height) - tile_top;
+                if local_left >= local_right || local_top >= local_bottom { continue; }
+                for row in local_top..local_bottom {
+                    let start = tile.offset(local_left, row);
+                    let end = tile.offset(local_right, row);
+                    tile.pixels[start..end].fill(0);
+                }
+                tile.mark_dirty_region(
+                    local_left as i32,
+                    local_top as i32,
+                    local_right - local_left,
+                    local_bottom - local_top,
+                );
+            }
+        }
+    }
+
     /// Convenience rectangle fill. Use try_fill_rect when allocation errors matter.
     pub fn fill_rect(
         &mut self,
@@ -2456,6 +2490,22 @@ mod tests {
         let consumed = surface.take_dirty_regions();
         assert_eq!(consumed, regions);
         assert!(surface.dirty_regions().is_empty());
+    }
+
+    #[test]
+    fn tiled_surface_clear_rect_marks_and_clears_only_existing_pixels() {
+        let color = Color::rgb(70, 80, 90);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(8, 8, 4).unwrap();
+        surface.try_fill_rect(&palette, 1, 1, 5, 3, color).unwrap();
+        surface.take_dirty_regions();
+
+        surface.clear_rect(2, 2, 3, 1);
+        assert_eq!(surface.pixel_rgba(2, 2), Some([0, 0, 0, 0]));
+        assert_eq!(surface.pixel_rgba(1, 2), Some([70, 80, 90, 255]));
+        assert_eq!(surface.pixel_rgba(5, 2), Some([70, 80, 90, 255]));
+        assert!(!surface.dirty_regions().is_empty());
+        assert_eq!(surface.allocated_tiles(), 2);
     }
 
     #[test]
