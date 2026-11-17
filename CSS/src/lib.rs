@@ -2459,6 +2459,46 @@ mod tests {
     }
 
     #[test]
+    fn tiled_surface_incremental_composite_clears_removed_tiles() {
+        let red = Color::rgb(240, 10, 20);
+        let green = Color::rgb(10, 220, 30);
+        let palette = test_palette(&[red, green]);
+        let mut surface = TiledSurface::with_tile_size(8, 8, 4).unwrap();
+        let mut target = Framebuffer::new(8, 8).unwrap();
+        target.clear(&palette, green);
+        target.take_dirty_regions();
+
+        surface.try_set_pixel(&palette, 2, 3, red).unwrap();
+        assert_eq!(surface.composite_dirty_into(&mut target, 0, 0).unwrap(), 1);
+        let offset = target.offset(2, 3);
+        assert_eq!(&target.pixels[offset..offset + 4], &[240, 10, 20, 255]);
+        assert!(surface.dirty_regions().is_empty());
+
+        surface.clear_tiles();
+        assert_eq!(surface.allocated_tiles(), 0);
+        assert_eq!(surface.composite_dirty_into(&mut target, 0, 0).unwrap(), 1);
+        assert_eq!(&target.pixels[offset..offset + 4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn tiled_surface_clear_tiles_preserves_old_bounds_as_dirty() {
+        let color = Color::rgb(30, 60, 90);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(10, 9, 4).unwrap();
+        surface.try_set_pixel(&palette, 8, 7, color).unwrap();
+        surface.take_dirty_regions();
+        surface.clear_tiles();
+        assert_eq!(
+            surface.dirty_regions(),
+            vec![DirtyRegion { x: 8, y: 7, width: 2, height: 2 }]
+        );
+        assert_eq!(surface.take_dirty_regions(), vec![
+            DirtyRegion { x: 8, y: 7, width: 2, height: 2 }
+        ]);
+        assert!(surface.dirty_regions().is_empty());
+    }
+
+    #[test]
     fn tiled_surface_alpha_blends_over_transparent_pixels() {
         let palette = test_palette(&[Color::rgb(200, 40, 20)]);
         let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
