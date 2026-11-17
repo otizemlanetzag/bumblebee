@@ -1574,6 +1574,108 @@ impl TiledSurface {
         Ok(())
     }
 
+    /// Draws a horizontal linear gradient without allocating a full-size framebuffer.
+    /// Only tiles intersecting the clipped rectangle are allocated.
+    pub fn try_linear_gradient_rect(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        start: Color,
+        end: Color,
+    ) -> Result<(), String> {
+        if width == 0 || height == 0 { return Ok(()); }
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
+        if left >= right || top >= bottom { return Ok(()); }
+
+        for px in left..right {
+            let relative_x = (px as i64 - x as i64) as u32;
+            let t = if width <= 1 { 0.0 } else { relative_x as f32 / (width - 1) as f32 };
+            let color = Color::rgb(
+                lerp(start.r, end.r, t),
+                lerp(start.g, end.g, t),
+                lerp(start.b, end.b, t),
+            );
+            for py in top..bottom {
+                self.try_set_pixel(palette, px, py, color)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Convenience horizontal gradient; use try_linear_gradient_rect to handle allocation errors.
+    pub fn linear_gradient_rect(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        start: Color,
+        end: Color,
+    ) {
+        let _ = self.try_linear_gradient_rect(palette, x, y, width, height, start, end);
+    }
+
+    /// Draws a radial gradient clipped to an ellipse, using sparse tile allocation.
+    pub fn try_radial_gradient_ellipse(
+        &mut self,
+        palette: &Palette,
+        center_x: i32,
+        center_y: i32,
+        radius_x: u32,
+        radius_y: u32,
+        center_color: Color,
+        edge_color: Color,
+    ) -> Result<(), String> {
+        if radius_x == 0 || radius_y == 0 { return Ok(()); }
+        let left = (center_x as i64 - radius_x as i64).max(0) as u32;
+        let top = (center_y as i64 - radius_y as i64).max(0) as u32;
+        let right = (center_x as i64 + radius_x as i64 + 1).min(self.width as i64) as u32;
+        let bottom = (center_y as i64 + radius_y as i64 + 1).min(self.height as i64) as u32;
+        if left >= right || top >= bottom { return Ok(()); }
+        let rx = radius_x as f64;
+        let ry = radius_y as f64;
+
+        for py in top..bottom {
+            let dy = (py as i64 - center_y as i64) as f64 / ry;
+            for px in left..right {
+                let dx = (px as i64 - center_x as i64) as f64 / rx;
+                let distance = (dx * dx + dy * dy).sqrt();
+                if distance > 1.0 { continue; }
+                let t = distance as f32;
+                let color = Color::rgb(
+                    lerp(center_color.r, edge_color.r, t),
+                    lerp(center_color.g, edge_color.g, t),
+                    lerp(center_color.b, edge_color.b, t),
+                );
+                self.try_set_pixel(palette, px, py, color)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Convenience radial gradient; use try_radial_gradient_ellipse to handle allocation errors.
+    pub fn radial_gradient_ellipse(
+        &mut self,
+        palette: &Palette,
+        center_x: i32,
+        center_y: i32,
+        radius_x: u32,
+        radius_y: u32,
+        center_color: Color,
+        edge_color: Color,
+    ) {
+        let _ = self.try_radial_gradient_ellipse(
+            palette, center_x, center_y, radius_x, radius_y, center_color, edge_color,
+        );
+    }
+
     /// Clears a rectangle to transparent without allocating untouched tiles.
     /// Existing tile pixels are zeroed and their changed areas are marked dirty.
     pub fn clear_rect(&mut self, x: i32, y: i32, width: u32, height: u32) {
@@ -2490,6 +2592,37 @@ mod tests {
         let consumed = surface.take_dirty_regions();
         assert_eq!(consumed, regions);
         assert!(surface.dirty_regions().is_empty());
+    }
+
+    #[test]
+    fn tiled_surface_linear_gradient_spans_tiles_without_full_surface_allocation() {
+        let start = Color::rgb(0, 0, 0);
+        let end = Color::rgb(100, 200, 240);
+        let palette = test_palette(&[
+            start, end,
+            Color::rgb(25, 50, 60),
+            Color::rgb(50, 100, 120),
+            Color::rgb(75, 150, 180),
+        ]);
+        let mut surface = TiledSurface::with_tile_size(100_000, 50_000, 8).unwrap();
+        surface.try_linear_gradient_rect(&palette, 2, 1, 5, 2, start, end).unwrap();
+        assert_eq!(surface.pixel_rgba(2, 1), Some([0, 0, 0, 255]));
+        assert_eq!(surface.pixel_rgba(4, 1), Some([50, 100, 120, 255]));
+        assert_eq!(surface.pixel_rgba(6, 2), Some([100, 200, 240, 255]));
+        assert_eq!(surface.allocated_tiles(), 1);
+    }
+
+    #[test]
+    fn tiled_surface_radial_gradient_is_elliptical_and_sparse() {
+        let center = Color::rgb(255, 255, 255);
+        let edge = Color::rgb(0, 0, 0);
+        let palette = test_palette(&[center, edge, Color::rgb(128, 128, 128)]);
+        let mut surface = TiledSurface::with_tile_size(100_000, 50_000, 8).unwrap();
+        surface.try_radial_gradient_ellipse(&palette, 4, 4, 2, 2, center, edge).unwrap();
+        assert_eq!(surface.pixel_rgba(4, 4), Some([255, 255, 255, 255]));
+        assert_eq!(surface.pixel_rgba(6, 4), Some([0, 0, 0, 255]));
+        assert_eq!(surface.pixel_rgba(0, 4), None);
+        assert!(surface.allocated_tiles() <= 4);
     }
 
     #[test]
