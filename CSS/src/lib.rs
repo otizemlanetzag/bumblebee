@@ -1636,8 +1636,8 @@ impl TiledSurface {
         if radius_x == 0 || radius_y == 0 { return Ok(()); }
         let left = (center_x as i64 - radius_x as i64).max(0) as u32;
         let top = (center_y as i64 - radius_y as i64).max(0) as u32;
-        let right = (center_x as i64 + radius_x as i64 + 1).min(self.width as i64) as u32;
-        let bottom = (center_y as i64 + radius_y as i64 + 1).min(self.height as i64) as u32;
+        let right = (center_x as i64 + radius_x as i64 + 1).clamp(0, self.width as i64) as u32;
+        let bottom = (center_y as i64 + radius_y as i64 + 1).clamp(0, self.height as i64) as u32;
         if left >= right || top >= bottom { return Ok(()); }
         let rx = radius_x as f64;
         let ry = radius_y as f64;
@@ -2610,6 +2610,19 @@ mod tests {
         assert_eq!(surface.pixel_rgba(4, 1), Some([50, 100, 120, 255]));
         assert_eq!(surface.pixel_rgba(6, 2), Some([100, 200, 240, 255]));
         assert_eq!(surface.allocated_tiles(), 1);
+    }
+
+    #[test]
+    fn tiled_surface_radial_gradient_clips_fully_outside_negative_bounds() {
+        let center = Color::rgb(255, 255, 255);
+        let edge = Color::rgb(0, 0, 0);
+        let palette = test_palette(&[center, edge]);
+        let mut surface = TiledSurface::with_tile_size(16, 16, 4).unwrap();
+        surface.try_radial_gradient_ellipse(&palette, -20, -20, 2, 2, center, edge).unwrap();
+        assert_eq!(surface.allocated_tiles(), 0);
+        surface.try_radial_gradient_ellipse(&palette, -1, 4, 2, 2, center, edge).unwrap();
+        assert!(surface.allocated_tiles() > 0);
+        assert!(surface.allocated_tiles() <= 2);
     }
 
     #[test]
