@@ -1900,7 +1900,8 @@ impl TiledSurface {
     /// when a tile pixel becomes transparent or when clear_tiles() is called.
     /// The destination rectangle is treated as owned by this surface; if other
     /// layers share the target, they must be composited again afterwards.
-    /// Source dirty state is consumed only after every region is processed.
+    /// Source dirty state is preserved so multiple targets can present the same updates.
+    /// Call take_dirty_regions() only after every interested consumer has caught up.
     pub fn composite_dirty_into(
         &mut self,
         target: &mut Framebuffer,
@@ -1938,7 +1939,6 @@ impl TiledSurface {
             processed += 1;
         }
 
-        self.take_dirty_regions();
         Ok(processed)
     }
 
@@ -2472,12 +2472,15 @@ mod tests {
         assert_eq!(surface.composite_dirty_into(&mut target, 0, 0).unwrap(), 1);
         let offset = target.offset(2, 3);
         assert_eq!(&target.pixels[offset..offset + 4], &[240, 10, 20, 255]);
-        assert!(surface.dirty_regions().is_empty());
+        assert_eq!(surface.dirty_regions().len(), 1);
 
         surface.clear_tiles();
         assert_eq!(surface.allocated_tiles(), 0);
         assert_eq!(surface.composite_dirty_into(&mut target, 0, 0).unwrap(), 1);
         assert_eq!(&target.pixels[offset..offset + 4], &[0, 0, 0, 0]);
+        assert!(!surface.dirty_regions().is_empty());
+        surface.take_dirty_regions();
+        assert!(surface.dirty_regions().is_empty());
     }
 
     #[test]
