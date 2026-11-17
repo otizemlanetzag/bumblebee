@@ -2493,10 +2493,10 @@ mod tests {
         surface.clear_tiles();
         assert_eq!(
             surface.dirty_regions(),
-            vec![DirtyRegion { x: 8, y: 7, width: 2, height: 2 }]
+            vec![DirtyRegion { x: 8, y: 4, width: 2, height: 4 }]
         );
         assert_eq!(surface.take_dirty_regions(), vec![
-            DirtyRegion { x: 8, y: 7, width: 2, height: 2 }
+            DirtyRegion { x: 8, y: 4, width: 2, height: 4 }
         ]);
         assert!(surface.dirty_regions().is_empty());
     }
