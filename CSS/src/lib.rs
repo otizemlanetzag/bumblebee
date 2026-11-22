@@ -2717,6 +2717,34 @@ mod tests {
     }
 
     #[test]
+    fn tiled_surface_directional_gradient_projects_pixels_along_vector() {
+        let black = Color::rgb(0, 0, 0);
+        let middle = Color::rgb(128, 128, 128);
+        let white = Color::rgb(255, 255, 255);
+        let palette = test_palette(&[black, middle, white]);
+        let mut surface = TiledSurface::with_tile_size(3, 3, 2).unwrap();
+        surface.try_linear_gradient_stops_between(
+            &palette, 0, 0, 3, 3, (0.5, 0.5), (2.5, 2.5),
+            &[GradientStop::new(0.0, black), GradientStop::new(1.0, white)],
+        ).unwrap();
+        assert_eq!(surface.pixel_rgba(0, 0), Some([0, 0, 0, 255]));
+        assert_eq!(surface.pixel_rgba(1, 1), Some([128, 128, 128, 255]));
+        assert_eq!(surface.pixel_rgba(2, 2), Some([255, 255, 255, 255]));
+    }
+
+    #[test]
+    fn tiled_surface_directional_gradient_rejects_identical_endpoints() {
+        let color = Color::rgb(22, 44, 66);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(4, 4, 2).unwrap();
+        assert!(surface.try_linear_gradient_stops_between(
+            &palette, 0, 0, 4, 4, (1.0, 1.0), (1.0, 1.0),
+            &[GradientStop::new(0.0, color)],
+        ).is_err());
+        assert_eq!(surface.allocated_tiles(), 0);
+    }
+
+    #[test]
     fn tiled_surface_multi_stop_gradient_interpolates_and_sorts_stops() {
         let black = Color::rgb(0, 0, 0);
         let red = Color::rgb(255, 0, 0);
