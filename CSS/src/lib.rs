@@ -1659,25 +1659,62 @@ impl TiledSurface {
         for px in left..right {
             let relative_x = (px as i64 - x as i64) as f32;
             let t = if width <= 1 { 0.0 } else { relative_x / (width - 1) as f32 };
-            let upper = ordered.partition_point(|stop| stop.position <= t);
-            let color = if upper == 0 {
-                ordered[0].color
-            } else if upper == ordered.len() {
-                ordered[ordered.len() - 1].color
-            } else {
-                let before = ordered[upper - 1];
-                let after = ordered[upper];
-                let span = after.position - before.position;
-                let local_t = if span <= f32::EPSILON { 1.0 } else {
-                    ((t - before.position) / span).clamp(0.0, 1.0)
-                };
-                Color::rgb(
-                    lerp(before.color.r, after.color.r, local_t),
-                    lerp(before.color.g, after.color.g, local_t),
-                    lerp(before.color.b, after.color.b, local_t),
-                )
-            };
+            let color = sample_gradient_stops(&ordered, t);
             for py in top..bottom { self.try_set_pixel(palette, px, py, color)?; }
+        }
+        Ok(())
+    }
+
+    /// Draws a linear gradient in any direction across a rectangle.
+    /// The start/end coordinates are relative to the rectangle's top-left corner.
+    /// Pixels are projected onto the start-to-end vector; values outside 0..=1
+    /// extend the first/last stop colors.
+    pub fn try_linear_gradient_stops_between(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        start: (f32, f32),
+        end: (f32, f32),
+        stops: &[GradientStop],
+    ) -> Result<(), String> {
+        if width == 0 || height == 0 { return Ok(()); }
+        if stops.is_empty() { return Err("a gradient must contain at least one color stop".into()); }
+        if !start.0.is_finite() || !start.1.is_finite()
+            || !end.0.is_finite() || !end.1.is_finite() {
+            return Err("gradient endpoints must be finite".into());
+        }
+        let dx = end.0 - start.0;
+        let dy = end.1 - start.1;
+        let length_squared = dx * dx + dy * dy;
+        if !length_squared.is_finite() || length_squared <= f32::EPSILON {
+            return Err("gradient endpoints must not be identical".into());
+        }
+        let mut ordered = stops.to_vec();
+        for stop in &ordered {
+            if !stop.position.is_finite() || !(0.0..=1.0).contains(&stop.position) {
+                return Err("gradient stop positions must be finite and between 0 and 1".into());
+            }
+        }
+        ordered.sort_by(|a, b| a.position.total_cmp(&b.position));
+
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
+        if left >= right || top >= bottom { return Ok(()); }
+
+        for py in top..bottom {
+            for px in left..right {
+                let local_x = (px as i64 - x as i64) as f32 + 0.5;
+                let local_y = (py as i64 - y as i64) as f32 + 0.5;
+                let projection = ((local_x - start.0) * dx + (local_y - start.1) * dy)
+                    / length_squared;
+                let color = sample_gradient_stops(&ordered, projection);
+                self.try_set_pixel(palette, px, py, color)?;
+            }
         }
         Ok(())
     }
@@ -2561,6 +2598,23 @@ impl LayerStack {
         }
         Ok(())
     }
+}
+
+fn sample_gradient_stops(stops: &[GradientStop], t: f32) -> Color {
+    let upper = stops.partition_point(|stop| stop.position <= t);
+    if upper == 0 { return stops[0].color; }
+    if upper == stops.len() { return stops[stops.len() - 1].color; }
+    let before = stops[upper - 1];
+    let after = stops[upper];
+    let span = after.position - before.position;
+    let local_t = if span <= f32::EPSILON { 1.0 } else {
+        ((t - before.position) / span).clamp(0.0, 1.0)
+    };
+    Color::rgb(
+        lerp(before.color.r, after.color.r, local_t),
+        lerp(before.color.g, after.color.g, local_t),
+        lerp(before.color.b, after.color.b, local_t),
+    )
 }
 
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
