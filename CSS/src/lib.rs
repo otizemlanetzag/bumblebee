@@ -20,6 +20,17 @@ pub struct Color {
     pub b: u8,
 }
 
+/// A normalized color stop for a multi-stop gradient.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GradientStop {
+    pub position: f32,
+    pub color: Color,
+}
+
+impl GradientStop {
+    pub const fn new(position: f32, color: Color) -> Self { Self { position, color } }
+}
+
 impl Color {
     pub const BLACK: Self = Self::rgb(0, 0, 0);
     pub const WHITE: Self = Self::rgb(255, 255, 255);
@@ -1622,6 +1633,63 @@ impl TiledSurface {
         let _ = self.try_linear_gradient_rect(palette, x, y, width, height, start, end);
     }
 
+    /// Draws a horizontal multi-stop gradient. Stops may be supplied in any order.
+    /// Positions must be finite and within 0..=1. At duplicate positions, the last
+    /// stop at that position wins, producing a hard color transition.
+    pub fn try_linear_gradient_stops_rect(
+        &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
+        stops: &[GradientStop],
+    ) -> Result<(), String> {
+        if width == 0 || height == 0 { return Ok(()); }
+        if stops.is_empty() { return Err("a gradient must contain at least one color stop".into()); }
+        let mut ordered = stops.to_vec();
+        for stop in &ordered {
+            if !stop.position.is_finite() || !(0.0..=1.0).contains(&stop.position) {
+                return Err("gradient stop positions must be finite and between 0 and 1".into());
+            }
+        }
+        ordered.sort_by(|a, b| a.position.total_cmp(&b.position));
+
+        let left = (x as i64).max(0).min(self.width as i64) as u32;
+        let top = (y as i64).max(0).min(self.height as i64) as u32;
+        let right = (x as i64 + width as i64).clamp(0, self.width as i64) as u32;
+        let bottom = (y as i64 + height as i64).clamp(0, self.height as i64) as u32;
+        if left >= right || top >= bottom { return Ok(()); }
+
+        for px in left..right {
+            let relative_x = (px as i64 - x as i64) as f32;
+            let t = if width <= 1 { 0.0 } else { relative_x / (width - 1) as f32 };
+            let upper = ordered.partition_point(|stop| stop.position <= t);
+            let color = if upper == 0 {
+                ordered[0].color
+            } else if upper == ordered.len() {
+                ordered[ordered.len() - 1].color
+            } else {
+                let before = ordered[upper - 1];
+                let after = ordered[upper];
+                let span = after.position - before.position;
+                let local_t = if span <= f32::EPSILON { 1.0 } else {
+                    ((t - before.position) / span).clamp(0.0, 1.0)
+                };
+                Color::rgb(
+                    lerp(before.color.r, after.color.r, local_t),
+                    lerp(before.color.g, after.color.g, local_t),
+                    lerp(before.color.b, after.color.b, local_t),
+                )
+            };
+            for py in top..bottom { self.try_set_pixel(palette, px, py, color)?; }
+        }
+        Ok(())
+    }
+
+    /// Convenience multi-stop gradient; use the try_ variant to handle allocation errors.
+    pub fn linear_gradient_stops_rect(
+        &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
+        stops: &[GradientStop],
+    ) {
+        let _ = self.try_linear_gradient_stops_rect(palette, x, y, width, height, stops);
+    }
+
     /// Draws a radial gradient clipped to an ellipse, using sparse tile allocation.
     pub fn try_radial_gradient_ellipse(
         &mut self,
@@ -2592,6 +2660,50 @@ mod tests {
         let consumed = surface.take_dirty_regions();
         assert_eq!(consumed, regions);
         assert!(surface.dirty_regions().is_empty());
+    }
+
+    #[test]
+    fn tiled_surface_multi_stop_gradient_interpolates_and_sorts_stops() {
+        let black = Color::rgb(0, 0, 0);
+        let red = Color::rgb(255, 0, 0);
+        let white = Color::rgb(255, 255, 255);
+        let palette = test_palette(&[black, red, white]);
+        let mut surface = TiledSurface::with_tile_size(5, 1, 2).unwrap();
+        let stops = [
+            GradientStop::new(1.0, white),
+            GradientStop::new(0.5, red),
+            GradientStop::new(0.0, black),
+        ];
+        surface.try_linear_gradient_stops_rect(&palette, 0, 0, 5, 1, &stops).unwrap();
+        assert_eq!(surface.pixel_rgba(0, 0), Some([0, 0, 0, 255]));
+        assert_eq!(surface.pixel_rgba(2, 0), Some([255, 0, 0, 255]));
+        assert_eq!(surface.pixel_rgba(4, 0), Some([255, 255, 255, 255]));
+    }
+
+    #[test]
+    fn tiled_surface_multi_stop_gradient_clamps_and_supports_single_stop() {
+        let color = Color::rgb(22, 44, 66);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(4, 1, 2).unwrap();
+        surface.try_linear_gradient_stops_rect(
+            &palette, 0, 0, 4, 1, &[GradientStop::new(0.4, color)]
+        ).unwrap();
+        for x in 0..4 { assert_eq!(surface.pixel_rgba(x, 0), Some([22, 44, 66, 255])); }
+    }
+
+    #[test]
+    fn tiled_surface_multi_stop_gradient_rejects_invalid_stops() {
+        let color = Color::rgb(22, 44, 66);
+        let palette = test_palette(&[color]);
+        let mut surface = TiledSurface::with_tile_size(4, 1, 2).unwrap();
+        assert!(surface.try_linear_gradient_stops_rect(&palette, 0, 0, 4, 1, &[]).is_err());
+        assert!(surface.try_linear_gradient_stops_rect(
+            &palette, 0, 0, 4, 1, &[GradientStop::new(f32::NAN, color)]
+        ).is_err());
+        assert!(surface.try_linear_gradient_stops_rect(
+            &palette, 0, 0, 4, 1, &[GradientStop::new(1.1, color)]
+        ).is_err());
+        assert_eq!(surface.allocated_tiles(), 0);
     }
 
     #[test]
