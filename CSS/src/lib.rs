@@ -1719,6 +1719,23 @@ impl TiledSurface {
         Ok(())
     }
 
+    /// Convenience directional gradient; use the try_ variant to handle errors.
+    pub fn linear_gradient_stops_between(
+        &mut self,
+        palette: &Palette,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        start: (f32, f32),
+        end: (f32, f32),
+        stops: &[GradientStop],
+    ) {
+        let _ = self.try_linear_gradient_stops_between(
+            palette, x, y, width, height, start, end, stops,
+        );
+    }
+
     /// Convenience multi-stop gradient; use the try_ variant to handle allocation errors.
     pub fn linear_gradient_stops_rect(
         &mut self, palette: &Palette, x: i32, y: i32, width: u32, height: u32,
